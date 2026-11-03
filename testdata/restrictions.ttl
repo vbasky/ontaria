@@ -1,0 +1,18 @@
+@prefix : <http://example.org/r#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+:Document a owl:Class ;
+    rdfs:label "Document" ;
+    owl:deprecated true .
+
+:title a owl:DatatypeProperty ;
+    rdfs:label "title" ;
+    rdfs:range xsd:string .
+
+:Document rdfs:subClassOf [
+    a owl:Restriction ;
+    owl:onProperty :title ;
+    owl:minCardinality "1"^^xsd:nonNegativeInteger
+] .

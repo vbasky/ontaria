@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="vocable icon">
+  <rect width="512" height="512" rx="112" fill="#1c1917"/>
+  <rect x="88" y="98" width="280" height="52" rx="26" fill="#f7f4ef"/>
+  <path d="M368 124 V302" stroke="#f7f4ef" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="368" cy="358" r="56" fill="#818cf8"/>
+  <circle cx="368" cy="358" r="34" fill="none" stroke="#f7f4ef" stroke-width="4"/>
+  <rect x="88" y="174" width="168" height="32" rx="16" fill="#818cf8"/>
+</svg>
