@@ -1,15 +1,21 @@
-//! Turtle to the class/property model.
+//! Turtle, RDF/XML, and JSON-LD to the class/property model.
 //!
-//! Triples are indexed once by subject. Extraction then walks that index.
+//! Each syntax is parsed to triples. Those triples are indexed once by
+//! subject, and extraction then walks that index.
 
 use std::collections::HashMap;
 use std::io::Read;
 
+use oxjsonld::{JsonLdLoadDocumentOptions, JsonLdParser, JsonLdRemoteDocument};
 use oxrdf::{BlankNode, Literal, NamedOrBlankNode, Term, Triple};
+use oxrdfxml::RdfXmlParser;
 use oxttl::TurtleParser;
 
 use crate::error::{Error, Result};
-use crate::model::{Class, Ontology, Property, PropertyRef, PropertyType, push_unique};
+use crate::model::{
+    Class, Ontology, Property, PropertyRef, PropertyType, Resource, ResourceValue, TermKind,
+    push_unique,
+};
 
 const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
 const RDF_PROPERTY: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property";
@@ -43,9 +49,56 @@ const SCHEMA_RANGE: &[&str] = &[
     "http://schema.org/rangeIncludes",
 ];
 
+/// Which RDF syntax a document was read as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RdfFormat {
+    Turtle,
+    RdfXml,
+    JsonLd,
+}
+
+impl RdfFormat {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Turtle => "turtle",
+            Self::RdfXml => "rdf/xml",
+            Self::JsonLd => "json-ld",
+        }
+    }
+}
+
 /// Parse Turtle from any reader. `base_uri` resolves relative IRIs and is
 /// stored as the ontology URI.
 pub fn parse_turtle(reader: impl Read, base_uri: &str) -> Result<Ontology> {
+    let bytes = read_all(reader)?;
+    parse_turtle_bytes(&bytes, base_uri)
+}
+
+/// Parse a document in Turtle, RDF/XML, or JSON-LD. The syntax is chosen from
+/// the bytes, after a leading byte-order mark and whitespace.
+pub fn parse_document(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    match detect_format(bytes) {
+        RdfFormat::Turtle => parse_turtle_bytes(bytes, base_uri),
+        RdfFormat::RdfXml => parse_rdfxml_bytes(bytes, base_uri),
+        RdfFormat::JsonLd => parse_jsonld_bytes(bytes, base_uri),
+    }
+}
+
+pub fn detect_format(bytes: &[u8]) -> RdfFormat {
+    let rest = skip_bom_and_space(bytes);
+    if rest.starts_with(b"{") || rest.starts_with(b"[") {
+        return RdfFormat::JsonLd;
+    }
+    if rest.starts_with(b"<") {
+        let after = rest.get(1).copied().unwrap_or(b' ');
+        if after.is_ascii_alphabetic() || after == b'?' || after == b'!' {
+            return RdfFormat::RdfXml;
+        }
+    }
+    RdfFormat::Turtle
+}
+
+fn parse_turtle_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
     let mut built = TurtleParser::new();
     if !base_uri.is_empty() {
         built = built
@@ -55,28 +108,242 @@ pub fn parse_turtle(reader: impl Read, base_uri: &str) -> Result<Ontology> {
                 reason: err.to_string(),
             })?;
     }
-    let mut parser = built.for_reader(reader);
+    let mut parser = built.for_slice(bytes);
     let mut triples = Vec::new();
     for triple in &mut parser {
-        triples.push(triple.map_err(|err| Error::Parse(err.to_string()))?);
+        triples.push(triple.map_err(|err| parse_err(RdfFormat::Turtle, err))?)
     }
-
-    let mut ontology = Ontology::new(base_uri);
+    let mut prefixes = Vec::new();
     for (prefix, iri) in parser.prefixes() {
         if !prefix.is_empty() {
-            ontology
-                .namespaces
-                .insert(prefix.to_string(), iri.to_string());
+            prefixes.push((prefix.to_string(), iri.to_string()));
         }
     }
+    Ok(ontology_from_triples(base_uri, triples, prefixes))
+}
 
+fn parse_rdfxml_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    let mut built = RdfXmlParser::new();
+    if !base_uri.is_empty() {
+        built = built
+            .with_base_iri(base_uri)
+            .map_err(|err| Error::BaseIri {
+                base: base_uri.to_string(),
+                reason: err.to_string(),
+            })?;
+    }
+    let mut triples = Vec::new();
+    for triple in built.for_slice(bytes) {
+        triples.push(triple.map_err(|err| parse_err(RdfFormat::RdfXml, err))?)
+    }
+    Ok(ontology_from_triples(
+        base_uri,
+        triples,
+        xml_prefixes(bytes),
+    ))
+}
+
+fn parse_jsonld_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    let mut built = JsonLdParser::new();
+    if !base_uri.is_empty() {
+        built = built
+            .with_base_iri(base_uri)
+            .map_err(|err| Error::BaseIri {
+                base: base_uri.to_string(),
+                reason: err.to_string(),
+            })?;
+    }
+    let mut triples = Vec::new();
+    for quad in built
+        .for_reader(bytes)
+        .with_load_document_callback(load_jsonld_context)
+    {
+        let quad = quad.map_err(|err| parse_err(RdfFormat::JsonLd, err))?;
+        triples.push(Triple::new(quad.subject, quad.predicate, quad.object));
+    }
+    Ok(ontology_from_triples(
+        base_uri,
+        triples,
+        jsonld_prefixes(bytes),
+    ))
+}
+
+fn ontology_from_triples(
+    base_uri: &str,
+    triples: Vec<Triple>,
+    prefixes: Vec<(String, String)>,
+) -> Ontology {
+    let mut ontology = Ontology::new(base_uri);
+    for (prefix, iri) in prefixes {
+        ontology.namespaces.insert(prefix, iri);
+    }
     let index = Index::build(triples);
     extract_classes(&index, &mut ontology);
     extract_properties(&index, &mut ontology);
     link_hierarchy(&index, &mut ontology);
     extract_restrictions(&index, &mut ontology);
     extract_imports(&index, &mut ontology);
-    Ok(ontology)
+    extract_resources(&index, &mut ontology);
+    ontology
+}
+
+fn load_jsonld_context(
+    url: &str,
+    _options: &JsonLdLoadDocumentOptions,
+) -> std::result::Result<JsonLdRemoteDocument, Box<dyn std::error::Error + Send + Sync>> {
+    if schema_org_context(url) {
+        return Ok(JsonLdRemoteDocument {
+            document: br#"{"@context":{"@vocab":"https://schema.org/","url":{"@type":"@id"},"mainEntityOfPage":{"@type":"@id"},"thumbnailUrl":{"@type":"@id"},"datePublished":{"@type":"http://www.w3.org/2001/XMLSchema#dateTime"},"dateModified":{"@type":"http://www.w3.org/2001/XMLSchema#dateTime"}}}"#.to_vec(),
+            document_url: "https://schema.org/".to_string(),
+        });
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(format!("unsupported JSON-LD context URL: {url}").into());
+    }
+    let mut response = ureq::get(url)
+        .header("User-Agent", "ontaria/0.1")
+        .header("Accept", "application/ld+json, application/json")
+        .call()
+        .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.to_string().into() })?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        return Err(format!("failed to load JSON-LD context {url}: HTTP {status}").into());
+    }
+    let document = response
+        .body_mut()
+        .read_to_vec()
+        .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.to_string().into() })?;
+    Ok(JsonLdRemoteDocument {
+        document,
+        document_url: url.to_string(),
+    })
+}
+
+fn schema_org_context(url: &str) -> bool {
+    matches!(
+        url.trim_end_matches('/'),
+        "https://schema.org"
+            | "http://schema.org"
+            | "https://schema.org/docs/jsonldcontext.jsonld"
+            | "http://schema.org/docs/jsonldcontext.jsonld"
+            | "https://schema.org/docs/jsonldcontext.json"
+            | "http://schema.org/docs/jsonldcontext.json"
+    )
+}
+
+fn parse_err(format: RdfFormat, err: impl std::fmt::Display) -> Error {
+    Error::Parse(format!("failed to parse {}: {err}", format.as_str()))
+}
+
+fn read_all(mut reader: impl Read) -> Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .map_err(|err| Error::Parse(format!("failed to read ontology bytes: {err}")))?;
+    Ok(bytes)
+}
+
+fn skip_bom_and_space(bytes: &[u8]) -> &[u8] {
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(bytes);
+    let start = bytes
+        .iter()
+        .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+        .unwrap_or(bytes.len());
+    &bytes[start..]
+}
+
+fn xml_prefixes(bytes: &[u8]) -> Vec<(String, String)> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Vec::new();
+    };
+    let mut prefixes = Vec::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("xmlns:") {
+        rest = &rest[start + "xmlns:".len()..];
+        let Some(name_end) = rest.find(|ch: char| !is_prefix_char(ch)) else {
+            break;
+        };
+        let prefix = &rest[..name_end];
+        rest = rest[name_end..].trim_start();
+        if !rest.starts_with('=') {
+            continue;
+        }
+        rest = rest[1..].trim_start();
+        let Some(quote) = rest.chars().next() else {
+            break;
+        };
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        rest = &rest[quote.len_utf8()..];
+        let Some(value_end) = rest.find(quote) else {
+            break;
+        };
+        if !prefix.is_empty() {
+            prefixes.push((prefix.to_string(), rest[..value_end].to_string()));
+        }
+        rest = &rest[value_end + quote.len_utf8()..];
+    }
+    prefixes
+}
+
+fn jsonld_prefixes(bytes: &[u8]) -> Vec<(String, String)> {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return Vec::new();
+    };
+    let mut prefixes = Vec::new();
+    collect_jsonld_prefixes(&value, &mut prefixes);
+    prefixes
+}
+
+fn collect_jsonld_prefixes(value: &serde_json::Value, prefixes: &mut Vec<(String, String)>) {
+    let serde_json::Value::Object(object) = value else {
+        if let serde_json::Value::Array(items) = value {
+            for item in items {
+                collect_jsonld_prefixes(item, prefixes);
+            }
+        }
+        return;
+    };
+    let Some(context) = object.get("@context") else {
+        return;
+    };
+    match context {
+        serde_json::Value::Object(map) => {
+            for (key, iri) in map {
+                if key.starts_with('@') {
+                    continue;
+                }
+                if let Some(iri) = iri.as_str() {
+                    if iri.starts_with("http://") || iri.starts_with("https://") {
+                        prefixes.push((key.clone(), iri.to_string()));
+                    }
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                if let serde_json::Value::Object(map) = item {
+                    collect_jsonld_prefixes(
+                        &serde_json::Value::Object({
+                            let mut wrapped = serde_json::Map::new();
+                            wrapped.insert(
+                                "@context".to_string(),
+                                serde_json::Value::Object(map.clone()),
+                            );
+                            wrapped
+                        }),
+                        prefixes,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn is_prefix_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
 }
 
 struct Index {
@@ -262,6 +529,79 @@ fn extract_restrictions(index: &Index, ontology: &mut Ontology) {
             cardinality,
             source_class: class_uri,
         });
+    }
+}
+
+fn extract_resources(index: &Index, ontology: &mut Ontology) {
+    let mut resources = Vec::new();
+    for (subject, triples) in &index.by_subject {
+        let id = match subject {
+            NamedOrBlankNode::NamedNode(node) => node.as_str().to_string(),
+            NamedOrBlankNode::BlankNode(node) => format!("_:{}", node.as_str()),
+        };
+        let mut types = Vec::new();
+        let mut values = Vec::new();
+        for triple in triples {
+            let predicate = triple.predicate.as_str();
+            if predicate == RDF_TYPE {
+                if let Some(iri) = term_iri(&triple.object) {
+                    types.push(iri);
+                }
+                continue;
+            }
+            values.push(resource_value(predicate, &triple.object));
+        }
+        if types.is_empty() && values.is_empty() {
+            continue;
+        }
+        types.sort();
+        values.sort_by(|left, right| {
+            left.predicate
+                .cmp(&right.predicate)
+                .then(left.value.cmp(&right.value))
+        });
+        resources.push(Resource { id, types, values });
+    }
+    resources.sort_by(|left, right| left.id.cmp(&right.id));
+    ontology.resources = resources;
+}
+
+fn resource_value(predicate: &str, object: &Term) -> ResourceValue {
+    match object {
+        Term::NamedNode(node) => ResourceValue {
+            predicate: predicate.to_string(),
+            value: node.as_str().to_string(),
+            kind: TermKind::Iri,
+            datatype: None,
+            language: None,
+        },
+        Term::BlankNode(node) => ResourceValue {
+            predicate: predicate.to_string(),
+            value: format!("_:{}", node.as_str()),
+            kind: TermKind::Blank,
+            datatype: None,
+            language: None,
+        },
+        Term::Literal(literal) => {
+            let datatype = literal.datatype();
+            let datatype = (datatype.as_str() != "http://www.w3.org/2001/XMLSchema#string")
+                .then(|| datatype.as_str().to_string());
+            ResourceValue {
+                predicate: predicate.to_string(),
+                value: literal.value().to_string(),
+                kind: TermKind::Literal,
+                datatype,
+                language: literal.language().map(str::to_string),
+            }
+        }
+        #[allow(unreachable_patterns)]
+        _ => ResourceValue {
+            predicate: predicate.to_string(),
+            value: object.to_string(),
+            kind: TermKind::Literal,
+            datatype: None,
+            language: None,
+        },
     }
 }
 
@@ -468,6 +808,96 @@ mod tests {
             ontology.imports,
             vec!["http://example.org/other".to_string()]
         );
+    }
+
+    #[test]
+    fn reads_the_same_news_item_from_turtle_rdfxml_and_jsonld() {
+        let turtle = parse_document(
+            include_bytes!("../testdata/news.ttl"),
+            "http://example.org/news",
+        )
+        .unwrap();
+        let rdfxml = parse_document(
+            include_bytes!("../testdata/news.rdf"),
+            "http://example.org/news",
+        )
+        .unwrap();
+        let jsonld = parse_document(
+            include_bytes!("../testdata/news.jsonld"),
+            "http://example.org/news",
+        )
+        .unwrap();
+        for ontology in [&turtle, &rdfxml, &jsonld] {
+            let item = ontology.get_class("NewsItem").unwrap();
+            assert_eq!(item.label, "News item");
+            assert_eq!(item.properties[0].uri, "http://example.org/news#headline");
+            assert!(item.properties[0].required);
+            let headline = ontology.get_property("headline").unwrap();
+            assert_eq!(
+                headline.domain,
+                vec!["http://example.org/news#NewsItem".to_string()]
+            );
+            assert_eq!(
+                headline.range,
+                vec!["http://www.w3.org/2001/XMLSchema#string".to_string()]
+            );
+            assert!(ontology.get_class("Topic").is_some());
+            assert_eq!(
+                ontology.get_property("about").unwrap().kind,
+                PropertyType::ObjectProperty
+            );
+        }
+    }
+
+    #[test]
+    fn reads_a_schema_org_news_article() {
+        let ontology = parse_document(
+            include_bytes!("../testdata/timesofindia.jsonld"),
+            "https://timesofindia.indiatimes.com/world/us/trump-derangement-syndrome-is-real-elon-musk-compares-it-to-rabies-in-fox-interview-with-us-president-donald-trump/articleshow/118364537.cms",
+        )
+        .unwrap();
+        let article = ontology
+            .resources
+            .iter()
+            .find(|resource| resource.types.iter().any(|ty| ty.ends_with("/NewsArticle")))
+            .unwrap();
+        let headline = article
+            .values
+            .iter()
+            .find(|value| value.predicate == "https://schema.org/headline")
+            .unwrap();
+        assert!(
+            headline
+                .value
+                .starts_with("'Trump derangement syndrome is real'")
+        );
+        let author = article
+            .values
+            .iter()
+            .find(|value| value.predicate == "https://schema.org/author")
+            .unwrap();
+        let person = ontology
+            .resources
+            .iter()
+            .find(|resource| resource.id == author.value)
+            .unwrap();
+        assert!(person.types.iter().any(|ty| ty.ends_with("/Person")));
+        assert!(person.values.iter().any(|value| {
+            value.predicate == "https://schema.org/name" && value.value == "TOI World Desk"
+        }));
+        let publisher = ontology
+            .resources
+            .iter()
+            .find(|resource| {
+                resource
+                    .types
+                    .iter()
+                    .any(|ty| ty.ends_with("/Organization"))
+            })
+            .unwrap();
+        assert!(publisher.values.iter().any(|value| {
+            value.predicate == "https://schema.org/name" && value.value == "Times Of India"
+        }));
     }
 
     #[test]

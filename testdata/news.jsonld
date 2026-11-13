@@ -1,0 +1,80 @@
+{
+  "@context": {
+    "news": "http://example.org/news#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#"
+  },
+  "@graph": [
+    {
+      "@id": "http://example.org/news",
+      "@type": "owl:Ontology",
+      "rdfs:label": "News"
+    },
+    {
+      "@id": "news:NewsItem",
+      "@type": "owl:Class",
+      "rdfs:label": "News item",
+      "rdfs:comment": "A single editorial item published as news.",
+      "rdfs:subClassOf": {
+        "@type": "owl:Restriction",
+        "owl:onProperty": { "@id": "news:headline" },
+        "owl:cardinality": {
+          "@value": "1",
+          "@type": "xsd:nonNegativeInteger"
+        }
+      }
+    },
+    {
+      "@id": "news:Topic",
+      "@type": "owl:Class",
+      "rdfs:label": "Topic",
+      "rdfs:comment": "A subject a news item is about."
+    },
+    {
+      "@id": "news:headline",
+      "@type": "owl:DatatypeProperty",
+      "rdfs:label": "headline",
+      "rdfs:domain": { "@id": "news:NewsItem" },
+      "rdfs:range": { "@id": "xsd:string" }
+    },
+    {
+      "@id": "news:body",
+      "@type": "owl:DatatypeProperty",
+      "rdfs:label": "body",
+      "rdfs:domain": { "@id": "news:NewsItem" },
+      "rdfs:range": { "@id": "xsd:string" }
+    },
+    {
+      "@id": "news:published",
+      "@type": "owl:DatatypeProperty",
+      "rdfs:label": "published",
+      "rdfs:domain": { "@id": "news:NewsItem" },
+      "rdfs:range": { "@id": "xsd:dateTime" }
+    },
+    {
+      "@id": "news:about",
+      "@type": "owl:ObjectProperty",
+      "rdfs:label": "about",
+      "rdfs:domain": { "@id": "news:NewsItem" },
+      "rdfs:range": { "@id": "news:Topic" }
+    },
+    {
+      "@id": "news:item-1001",
+      "@type": "news:NewsItem",
+      "rdfs:label": "Dock strike delays grain shipments",
+      "news:headline": "Dock strike delays grain shipments",
+      "news:body": "Port workers at the grain terminal walked out before dawn, holding three bulk carriers that were due to sail on the morning tide.",
+      "news:published": {
+        "@value": "2026-11-13T06:30:00Z",
+        "@type": "xsd:dateTime"
+      },
+      "news:about": { "@id": "news:topic-ports" }
+    },
+    {
+      "@id": "news:topic-ports",
+      "@type": "news:Topic",
+      "rdfs:label": "Ports"
+    }
+  ]
+}

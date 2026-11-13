@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::cache::CacheManager;
 use crate::error::{Error, Result};
 use crate::model::Ontology;
-use crate::parser::parse_turtle;
+use crate::parser::parse_document;
 
 pub struct Loaded {
     pub ontology: Ontology,
@@ -52,7 +52,7 @@ pub fn load_ontology(spec: Option<&str>) -> Result<Loaded> {
             source,
         })?;
         let base = file_url(&path);
-        let ontology = parse_turtle(bytes.as_slice(), &base)?;
+        let ontology = parse_document(bytes.as_slice(), &base)?;
         return Ok(Loaded {
             ontology,
             warnings,
@@ -66,7 +66,7 @@ pub fn load_ontology(spec: Option<&str>) -> Result<Loaded> {
         )));
     }
     let bytes = cache.load(&spec)?;
-    let ontology = parse_turtle(bytes.as_slice(), &spec)?;
+    let ontology = parse_document(bytes.as_slice(), &spec)?;
     Ok(Loaded {
         ontology,
         warnings,

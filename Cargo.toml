@@ -1,14 +1,20 @@
 [package]
-name = "vocable"
-version = "0.1.0"
+name = "ontaria"
+version = "0.0.1"
 edition = "2024"
-description = "Query RDF Schema and OWL ontologies from the command line"
+description = "Look up classes, properties, and resources in RDF Schema and OWL ontologies"
 license = "MIT"
+repository = "https://github.com/vbasky/ontaria"
+readme = "README.md"
+keywords = ["rdf", "owl", "json-ld", "ontology"]
+categories = ["command-line-utilities", "parser-implementations"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "now", "std"] }
 clap = { version = "4.6.7", features = ["derive"] }
+oxjsonld = "0.2.7"
 oxrdf = "0.3.5"
+oxrdfxml = "0.2.5"
 oxttl = "0.2.5"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"

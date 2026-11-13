@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 
 use crate::cache::CacheManager;
 use crate::model::{Class, Ontology, Property};
-use crate::parser::parse_turtle;
+use crate::parser::parse_document;
 use crate::query::SearchResults;
 
 pub struct OntologyManager {
@@ -36,6 +36,22 @@ impl OntologyManager {
 
     pub fn main(&self) -> &Ontology {
         &self.main
+    }
+
+    /// One ontology containing the main file and every import it reaches.
+    /// A class declared here can see parents and properties declared in an import.
+    pub fn merged(&mut self) -> Ontology {
+        self.ensure_imports();
+        let imported = self
+            .loaded_in_order()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut combined = self.main.clone();
+        for ontology in imported {
+            combined.absorb(&ontology);
+        }
+        combined
     }
 
     pub fn get_class(&mut self, term: &str, imports: bool) -> Option<&Class> {
@@ -189,7 +205,7 @@ impl OntologyManager {
                 return None;
             }
         };
-        let ontology = match parse_turtle(bytes.as_slice(), uri) {
+        let ontology = match parse_document(bytes.as_slice(), uri) {
             Ok(ontology) => ontology,
             Err(err) => {
                 self.warnings
@@ -209,12 +225,12 @@ impl OntologyManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::parse_turtle;
+    use crate::parser::{parse_document, parse_turtle};
     use std::fs;
 
     #[test]
     fn finds_a_class_through_an_import_and_stops_on_a_cycle() {
-        let dir = std::env::temp_dir().join(format!("vocable-imports-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ontaria-imports-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let cache = CacheManager::open(&dir).unwrap();
         let main_url = "http://example.org/main";
@@ -253,6 +269,60 @@ mod tests {
                 .warnings()
                 .iter()
                 .any(|warning| warning.contains("Circular import"))
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn merged_import_exposes_the_parent_and_its_property() {
+        let dir = std::env::temp_dir().join(format!("ontaria-merge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cache = CacheManager::open(&dir).unwrap();
+        let main_url = "http://example.org/news";
+        let other_url = "http://example.org/work";
+        cache
+            .save(
+                main_url,
+                b"
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+                <http://example.org/news> a owl:Ontology ;
+                    owl:imports <http://example.org/work> .
+                <http://example.org/news#NewsItem> a owl:Class ;
+                    rdfs:label \"News item\" ;
+                    rdfs:subClassOf <http://example.org/work#Work> .
+                ",
+            )
+            .unwrap();
+        cache
+            .save(
+                other_url,
+                br#"
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+                @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+                <http://example.org/work#Work> a owl:Class ; rdfs:label "Work" .
+                <http://example.org/work#title> a owl:DatatypeProperty ;
+                    rdfs:label "title" ;
+                    rdfs:domain <http://example.org/work#Work> ;
+                    rdfs:range xsd:string .
+                "#,
+            )
+            .unwrap();
+        let bytes = cache.load(main_url).unwrap();
+        let ontology = parse_document(bytes.as_slice(), main_url).unwrap();
+        let mut manager = OntologyManager::new(ontology, cache);
+        let merged = manager.merged();
+        let parents = merged.get_parents("NewsItem").unwrap();
+        assert_eq!(parents[0].label, "Work");
+        let details = merged
+            .get_class_with_inherited_properties("NewsItem")
+            .unwrap();
+        assert!(
+            details
+                .inherited_properties
+                .iter()
+                .any(|item| item.property.label == "title")
         );
         let _ = fs::remove_dir_all(&dir);
     }

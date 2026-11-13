@@ -1,7 +1,7 @@
 //! On-disk cache of ontology bytes.
 //!
 //! Files are `{sha256(url)}.ttl` plus `{sha256(url)}.meta.json` under
-//! `~/.vocable/cache`.
+//! `~/.ontaria/cache`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -33,7 +33,7 @@ impl CacheManager {
                 "HOME is not set, so the ontology cache path cannot be built".to_string(),
             )
         })?;
-        Self::open(Path::new(&home).join(".vocable").join("cache"))
+        Self::open(Path::new(&home).join(".ontaria").join("cache"))
     }
 
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
@@ -94,8 +94,11 @@ impl CacheManager {
 
     pub fn fetch(&self, url: &str) -> Result<CacheMetadata> {
         let mut response = ureq::get(url)
-            .header("User-Agent", "vocable/0.1")
-            .header("Accept", "text/turtle, application/rdf+xml, */*")
+            .header("User-Agent", "ontaria/0.1")
+            .header(
+                "Accept",
+                "text/turtle, application/rdf+xml, application/ld+json, application/json, */*;q=0.1",
+            )
             .call()
             .map_err(|err| Error::Fetch(err.to_string()))?;
         let status = response.status().as_u16();
@@ -157,7 +160,7 @@ mod tests {
 
     #[test]
     fn round_trip_uses_the_url_hash_as_the_file_name() {
-        let dir = std::env::temp_dir().join(format!("vocable-cache-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("ontaria-cache-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let cache = CacheManager::open(&dir).unwrap();
         let url = "https://example.org/demo.ttl";

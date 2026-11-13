@@ -1,0 +1,50 @@
+@prefix news: <http://example.org/news#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.org/news> a owl:Ontology ;
+    rdfs:label "News" .
+
+news:NewsItem a owl:Class ;
+    rdfs:label "News item" ;
+    rdfs:comment "A single editorial item published as news." ;
+    rdfs:subClassOf [
+        a owl:Restriction ;
+        owl:onProperty news:headline ;
+        owl:cardinality "1"^^xsd:nonNegativeInteger
+    ] .
+
+news:Topic a owl:Class ;
+    rdfs:label "Topic" ;
+    rdfs:comment "A subject a news item is about." .
+
+news:headline a owl:DatatypeProperty ;
+    rdfs:label "headline" ;
+    rdfs:domain news:NewsItem ;
+    rdfs:range xsd:string .
+
+news:body a owl:DatatypeProperty ;
+    rdfs:label "body" ;
+    rdfs:domain news:NewsItem ;
+    rdfs:range xsd:string .
+
+news:published a owl:DatatypeProperty ;
+    rdfs:label "published" ;
+    rdfs:domain news:NewsItem ;
+    rdfs:range xsd:dateTime .
+
+news:about a owl:ObjectProperty ;
+    rdfs:label "about" ;
+    rdfs:domain news:NewsItem ;
+    rdfs:range news:Topic .
+
+news:item-1001 a news:NewsItem ;
+    rdfs:label "Dock strike delays grain shipments" ;
+    news:headline "Dock strike delays grain shipments" ;
+    news:body "Port workers at the grain terminal walked out before dawn, holding three bulk carriers that were due to sail on the morning tide." ;
+    news:published "2026-11-13T06:30:00Z"^^xsd:dateTime ;
+    news:about news:topic-ports .
+
+news:topic-ports a news:Topic ;
+    rdfs:label "Ports" .

@@ -2,14 +2,14 @@ use std::fs;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
-use vocable::{
+use ontaria::{
     CacheManager, Class, Ontology, OntologyManager, Property, SearchResults, load::existing_file,
     load::file_url, load::load_ontology, print_error, print_success,
 };
 
 #[derive(Parser)]
 #[command(
-    name = "vocable",
+    name = "ontaria",
     version,
     about = "Look up classes and properties in an RDF Schema or OWL ontology"
 )]
@@ -88,6 +88,8 @@ enum Command {
     ListNamespaces,
     /// List owl:imports declarations.
     ListImports,
+    /// List the typed things in the file, such as a news article.
+    Resources,
     /// List properties of a class, properties that reference it, and inherited properties.
     ListClassProperties {
         /// IRI, `prefix:Local`, local name, or label.
@@ -130,7 +132,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn dispatch(cli: Cli) -> vocable::Result<()> {
+fn dispatch(cli: Cli) -> ontaria::Result<()> {
     let ontology = &cli.ontology;
     let imports = cli.imports;
     match cli.command {
@@ -141,8 +143,9 @@ fn dispatch(cli: Cli) -> vocable::Result<()> {
         Command::GetParents { term } => parents(ontology, &term, imports),
         Command::GetChildren { term } => children(ontology, &term, imports),
         Command::Search { query, kind } => search(ontology, &query, kind, imports),
-        Command::ListNamespaces => namespaces(ontology),
-        Command::ListImports => imports_of(ontology),
+        Command::ListNamespaces => namespaces(ontology, imports),
+        Command::ListImports => imports_of(ontology, imports),
+        Command::Resources => resources(ontology, imports),
         Command::ListClassProperties { term } => class_properties(ontology, &term, imports),
         Command::BatchGetClass { terms } => batch_classes(ontology, &terms, imports),
         Command::BatchGetProperty { terms } => batch_properties(ontology, &terms, imports),
@@ -150,10 +153,10 @@ fn dispatch(cli: Cli) -> vocable::Result<()> {
     }
 }
 
-fn fetch(url: &str) -> vocable::Result<()> {
+fn fetch(url: &str) -> ontaria::Result<()> {
     let cache = CacheManager::shared()?;
     let meta = if let Some(path) = existing_file(url) {
-        let bytes = fs::read(&path).map_err(|source| vocable::Error::Read {
+        let bytes = fs::read(&path).map_err(|source| ontaria::Error::Read {
             path: path.clone(),
             source,
         })?;
@@ -164,7 +167,7 @@ fn fetch(url: &str) -> vocable::Result<()> {
     print_success(&meta, &[])
 }
 
-fn list_cached() -> vocable::Result<()> {
+fn list_cached() -> ontaria::Result<()> {
     let cached = CacheManager::shared()?.list()?;
     print_success(&cached, &[])
 }
@@ -174,37 +177,16 @@ fn get_class(
     term: &str,
     inherited: bool,
     imports: bool,
-) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        if inherited {
-            let details = manager
-                .ontology_with_class(term)
-                .and_then(|ontology| ontology.get_class_with_inherited_properties(term));
-            let Some(details) = details else {
-                return missing("class", term);
-            };
-            return print_success(
-                &details,
-                &join_warnings(&loaded.warnings, manager.warnings()),
-            );
-        }
-        let class = manager.get_class(term, true).cloned();
-        let Some(class) = class else {
-            return missing("class", term);
-        };
-        return print_success(&class, &join_warnings(&loaded.warnings, manager.warnings()));
-    }
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
     if inherited {
-        let details = loaded
-            .ontology
+        let details = ontology
             .get_class_with_inherited_properties(term)
             .ok_or_else(|| missing_err("class", term))?;
-        return print_success(&details, &loaded.warnings);
+        return print_success(&details, &warnings);
     }
-    let class = require_class(&loaded.ontology, term)?;
-    print_success(class, &loaded.warnings)
+    let class = require_class(&ontology, term)?;
+    print_success(class, &warnings)
 }
 
 fn get_property(
@@ -212,85 +194,32 @@ fn get_property(
     term: &str,
     usage: bool,
     imports: bool,
-) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        if usage {
-            let usage = manager
-                .ontology_with_property(term)
-                .and_then(|ontology| ontology.get_property_with_usage(term));
-            let Some(usage) = usage else {
-                return missing("property", term);
-            };
-            return print_success(&usage, &join_warnings(&loaded.warnings, manager.warnings()));
-        }
-        let property = manager.get_property(term, true).cloned();
-        let Some(property) = property else {
-            return missing("property", term);
-        };
-        return print_success(
-            &property,
-            &join_warnings(&loaded.warnings, manager.warnings()),
-        );
-    }
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
     if usage {
-        let usage = loaded
-            .ontology
+        let usage = ontology
             .get_property_with_usage(term)
             .ok_or_else(|| missing_err("property", term))?;
-        return print_success(&usage, &loaded.warnings);
+        return print_success(&usage, &warnings);
     }
-    let property = require_property(&loaded.ontology, term)?;
-    print_success(property, &loaded.warnings)
+    let property = require_property(&ontology, term)?;
+    print_success(property, &warnings)
 }
 
-fn parents(spec: &Option<String>, term: &str, imports: bool) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if !imports {
-        let parents = loaded
-            .ontology
-            .get_parents(term)
-            .ok_or_else(|| missing_err("class", term))?;
-        return print_success(&parents, &loaded.warnings);
-    }
-    let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-    let parents = manager.ontology_with_class(term).and_then(|ontology| {
-        ontology
-            .get_parents(term)
-            .map(|items| items.into_iter().cloned().collect::<Vec<_>>())
-    });
-    let Some(parents) = parents else {
-        return missing("class", term);
-    };
-    print_success(
-        &parents,
-        &join_warnings(&loaded.warnings, manager.warnings()),
-    )
+fn parents(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let parents = ontology
+        .get_parents(term)
+        .ok_or_else(|| missing_err("class", term))?;
+    print_success(&parents, &warnings)
 }
 
-fn children(spec: &Option<String>, term: &str, imports: bool) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if !imports {
-        let children = loaded
-            .ontology
-            .get_children(term)
-            .ok_or_else(|| missing_err("class", term))?;
-        return print_success(&children, &loaded.warnings);
-    }
-    let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-    let children = manager.ontology_with_class(term).and_then(|ontology| {
-        ontology
-            .get_children(term)
-            .map(|items| items.into_iter().cloned().collect::<Vec<_>>())
-    });
-    let Some(children) = children else {
-        return missing("class", term);
-    };
-    print_success(
-        &children,
-        &join_warnings(&loaded.warnings, manager.warnings()),
-    )
+fn children(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let children = ontology
+        .get_children(term)
+        .ok_or_else(|| missing_err("class", term))?;
+    print_success(&children, &warnings)
 }
 
 fn search(
@@ -298,92 +227,59 @@ fn search(
     query: &str,
     kind: Option<Kind>,
     imports: bool,
-) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        let results = filter_search(manager.search(query, true), kind);
-        return print_success(
-            &results,
-            &join_warnings(&loaded.warnings, manager.warnings()),
-        );
-    }
-    let results = filter_search(loaded.ontology.search(query), kind);
-    print_success(&results, &loaded.warnings)
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let results = filter_search(ontology.search(query), kind);
+    print_success(&results, &warnings)
 }
 
-fn namespaces(spec: &Option<String>) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    print_success(&loaded.ontology.namespaces, &loaded.warnings)
+fn namespaces(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    print_success(&ontology.namespaces, &warnings)
 }
 
-fn imports_of(spec: &Option<String>) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    print_success(&loaded.ontology.imports, &loaded.warnings)
+fn imports_of(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    print_success(&ontology.imports, &warnings)
 }
 
-fn class_properties(spec: &Option<String>, term: &str, imports: bool) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if !imports {
-        let result = loaded
-            .ontology
-            .get_class_properties(term)
-            .ok_or_else(|| missing_err("class", term))?;
-        return print_success(&result, &loaded.warnings);
-    }
-    let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-    let result = manager
-        .ontology_with_class(term)
-        .and_then(|ontology| ontology.get_class_properties(term));
-    let Some(result) = result else {
-        return missing("class", term);
-    };
-    print_success(
-        &result,
-        &join_warnings(&loaded.warnings, manager.warnings()),
-    )
+fn resources(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    print_success(&ontology.resources, &warnings)
 }
 
-fn batch_classes(spec: &Option<String>, terms: &[String], imports: bool) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        let results = manager.batch_classes(terms, true);
-        return print_success(
-            &results,
-            &join_warnings(&loaded.warnings, manager.warnings()),
-        );
-    }
+fn class_properties(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let result = ontology
+        .get_class_properties(term)
+        .ok_or_else(|| missing_err("class", term))?;
+    print_success(&result, &warnings)
+}
+
+fn batch_classes(spec: &Option<String>, terms: &[String], imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
     let mut map = serde_json::Map::new();
     for term in terms {
-        let value = match loaded.ontology.get_class(term).cloned() {
+        let value = match ontology.get_class(term).cloned() {
             Some(class) => serde_json::to_value(class).unwrap_or(serde_json::Value::Null),
             None => serde_json::Value::Null,
         };
         map.insert(term.clone(), value);
     }
-    print_success(&map, &loaded.warnings)
+    print_success(&map, &warnings)
 }
 
-fn batch_properties(spec: &Option<String>, terms: &[String], imports: bool) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        let results = manager.batch_properties(terms, true);
-        return print_success(
-            &results,
-            &join_warnings(&loaded.warnings, manager.warnings()),
-        );
-    }
+fn batch_properties(spec: &Option<String>, terms: &[String], imports: bool) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
     let mut map = serde_json::Map::new();
     for term in terms {
-        let value = match loaded.ontology.get_property(term).cloned() {
+        let value = match ontology.get_property(term).cloned() {
             Some(property) => serde_json::to_value(property).unwrap_or(serde_json::Value::Null),
             None => serde_json::Value::Null,
         };
         map.insert(term.clone(), value);
     }
-    print_success(&map, &loaded.warnings)
+    print_success(&map, &warnings)
 }
 
 fn batch_search(
@@ -391,28 +287,30 @@ fn batch_search(
     queries: &[String],
     kind: Option<Kind>,
     imports: bool,
-) -> vocable::Result<()> {
-    let loaded = load_ontology(spec.as_deref())?;
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, imports)?;
     let mut map = serde_json::Map::new();
-    if imports {
-        let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-        for query in queries {
-            let results = filter_search(manager.search(query, true), kind);
-            map.insert(
-                query.clone(),
-                serde_json::to_value(results).unwrap_or(serde_json::Value::Null),
-            );
-        }
-        return print_success(&map, &join_warnings(&loaded.warnings, manager.warnings()));
-    }
     for query in queries {
-        let results = filter_search(loaded.ontology.search(query), kind);
+        let results = filter_search(ontology.search(query), kind);
         map.insert(
             query.clone(),
             serde_json::to_value(results).unwrap_or(serde_json::Value::Null),
         );
     }
-    print_success(&map, &loaded.warnings)
+    print_success(&map, &warnings)
+}
+
+fn ontology_for(spec: &Option<String>, imports: bool) -> ontaria::Result<(Ontology, Vec<String>)> {
+    let loaded = load_ontology(spec.as_deref())?;
+    if !imports {
+        return Ok((loaded.ontology, loaded.warnings));
+    }
+    let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
+    let ontology = manager.merged();
+    Ok((
+        ontology,
+        join_warnings(&loaded.warnings, manager.warnings()),
+    ))
 }
 
 fn filter_search(mut results: SearchResults, kind: Option<Kind>) -> SearchResults {
@@ -424,24 +322,20 @@ fn filter_search(mut results: SearchResults, kind: Option<Kind>) -> SearchResult
     results
 }
 
-fn require_class<'a>(ontology: &'a Ontology, term: &str) -> vocable::Result<&'a Class> {
+fn require_class<'a>(ontology: &'a Ontology, term: &str) -> ontaria::Result<&'a Class> {
     ontology
         .get_class(term)
         .ok_or_else(|| missing_err("class", term))
 }
 
-fn require_property<'a>(ontology: &'a Ontology, term: &str) -> vocable::Result<&'a Property> {
+fn require_property<'a>(ontology: &'a Ontology, term: &str) -> ontaria::Result<&'a Property> {
     ontology
         .get_property(term)
         .ok_or_else(|| missing_err("property", term))
 }
 
-fn missing(kind: &str, name: &str) -> vocable::Result<()> {
-    Err(missing_err(kind, name))
-}
-
-fn missing_err(kind: &str, name: &str) -> vocable::Error {
-    vocable::Error::Message(format!("{kind} not found: {name}"))
+fn missing_err(kind: &str, name: &str) -> ontaria::Error {
+    ontaria::Error::Message(format!("{kind} not found: {name}"))
 }
 
 fn join_warnings(first: &[String], second: &[String]) -> Vec<String> {

@@ -1,8 +1,12 @@
-<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="vocable icon">
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="ontaria icon">
   <rect width="512" height="512" rx="112" fill="#1c1917"/>
-  <rect x="88" y="98" width="280" height="52" rx="26" fill="#f7f4ef"/>
-  <path d="M368 124 V302" stroke="#f7f4ef" stroke-width="14" stroke-linecap="round"/>
-  <circle cx="368" cy="358" r="56" fill="#818cf8"/>
-  <circle cx="368" cy="358" r="34" fill="none" stroke="#f7f4ef" stroke-width="4"/>
-  <rect x="88" y="174" width="168" height="32" rx="16" fill="#818cf8"/>
+  <rect x="286" y="62" width="86" height="48" rx="16" fill="#fb923c"/>
+  <rect x="176" y="86" width="232" height="308" rx="40" fill="#4f46e5"/>
+  <rect x="92" y="132" width="276" height="300" rx="40" fill="#f6f1ea"/>
+  <rect x="92" y="132" width="276" height="300" rx="40" stroke="#e6dfd4" stroke-width="3"/>
+  <path d="M230 248 L164 332" stroke="#1c1917" stroke-width="14" stroke-linecap="round"/>
+  <path d="M230 248 L300 324" stroke="#ea580c" stroke-width="14" stroke-linecap="round"/>
+  <circle cx="230" cy="220" r="30" fill="#4338ca"/>
+  <circle cx="158" cy="348" r="22" fill="#1c1917"/>
+  <path d="M306 314 L334 342 L306 370 L278 342 Z" fill="#fb923c"/>
 </svg>

@@ -33,6 +33,37 @@ pub struct Ontology {
     pub classes: BTreeMap<String, Class>,
     pub properties: BTreeMap<String, Property>,
     pub namespaces: BTreeMap<String, String>,
+    /// Typed things in the file, such as a news article that uses the vocabulary.
+    pub resources: Vec<Resource>,
+}
+
+/// One typed thing in a document. A schema.org news article is one of these,
+/// not a class declaration.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct Resource {
+    pub id: String,
+    pub types: Vec<String>,
+    pub values: Vec<ResourceValue>,
+}
+
+/// One predicate on a [`Resource`].
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub struct ResourceValue {
+    pub predicate: String,
+    pub value: String,
+    pub kind: TermKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub datatype: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TermKind {
+    Iri,
+    Blank,
+    Literal,
 }
 
 /// A named class.
@@ -93,6 +124,7 @@ impl Ontology {
             classes: BTreeMap::new(),
             properties: BTreeMap::new(),
             namespaces,
+            resources: Vec::new(),
         }
     }
 
@@ -125,6 +157,90 @@ impl Ontology {
             Some((prefix, ns)) => format!("{prefix}:{}", &uri[ns.len()..]),
             None => uri.to_string(),
         }
+    }
+
+    /// Fold another ontology into this one. Terms already declared here keep
+    /// their labels. Parents, restriction properties, domains, and ranges are
+    /// united, then subclass links are rebuilt across both files.
+    pub fn absorb(&mut self, other: &Ontology) {
+        for (prefix, iri) in &other.namespaces {
+            self.namespaces
+                .entry(prefix.clone())
+                .or_insert_with(|| iri.clone());
+        }
+        for iri in &other.imports {
+            push_unique(&mut self.imports, iri.clone());
+        }
+        for (uri, class) in &other.classes {
+            if let Some(existing) = self.classes.get_mut(uri) {
+                for parent in &class.parents {
+                    push_unique(&mut existing.parents, parent.clone());
+                }
+                for property in &class.properties {
+                    if !existing
+                        .properties
+                        .iter()
+                        .any(|item| item.uri == property.uri)
+                    {
+                        existing.properties.push(property.clone());
+                    }
+                }
+                fill_empty(&mut existing.label, &class.label);
+                fill_empty(&mut existing.comment, &class.comment);
+                fill_empty(&mut existing.description, &class.description);
+            } else {
+                self.classes.insert(uri.clone(), class.clone());
+            }
+        }
+        for (uri, property) in &other.properties {
+            if let Some(existing) = self.properties.get_mut(uri) {
+                for domain in &property.domain {
+                    push_unique(&mut existing.domain, domain.clone());
+                }
+                for range in &property.range {
+                    push_unique(&mut existing.range, range.clone());
+                }
+                fill_empty(&mut existing.label, &property.label);
+                fill_empty(&mut existing.comment, &property.comment);
+                fill_empty(&mut existing.description, &property.description);
+            } else {
+                self.properties.insert(uri.clone(), property.clone());
+            }
+        }
+        for resource in &other.resources {
+            if !self.resources.iter().any(|item| item.id == resource.id) {
+                self.resources.push(resource.clone());
+            }
+        }
+        self.relink_children();
+    }
+
+    fn relink_children(&mut self) {
+        for class in self.classes.values_mut() {
+            class.children.clear();
+        }
+        let edges: Vec<(String, String)> = self
+            .classes
+            .iter()
+            .flat_map(|(uri, class)| {
+                class
+                    .parents
+                    .iter()
+                    .cloned()
+                    .map(move |parent| (uri.clone(), parent))
+            })
+            .collect();
+        for (child, parent) in edges {
+            if let Some(parent_class) = self.classes.get_mut(&parent) {
+                push_unique(&mut parent_class.children, child);
+            }
+        }
+    }
+}
+
+fn fill_empty(slot: &mut String, value: &str) {
+    if slot.is_empty() && !value.is_empty() {
+        *slot = value.to_string();
     }
 }
 

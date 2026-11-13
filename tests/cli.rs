@@ -3,7 +3,7 @@ use std::process::Command;
 use serde_json::Value;
 
 fn tool() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_vocable"))
+    Command::new(env!("CARGO_BIN_EXE_ontaria"))
 }
 
 #[test]
