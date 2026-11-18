@@ -13,6 +13,7 @@ use crate::model::{Class, Ontology, Property};
 use crate::parser::parse_document;
 use crate::query::SearchResults;
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub struct OntologyManager {
     main: Ontology,
     loaded: HashMap<String, Ontology>,
@@ -20,6 +21,7 @@ pub struct OntologyManager {
     warnings: Vec<String>,
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 impl OntologyManager {
     pub fn new(main: Ontology, cache: CacheManager) -> Self {
         Self {

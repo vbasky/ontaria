@@ -29,7 +29,7 @@ fn help_lists_the_query_commands() {
 
 #[test]
 fn get_class_reads_a_local_turtle_file() {
-    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/simple.ttl");
+    let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/../testdata/simple.ttl");
     let output = tool()
         .args(["get-class", "ex:Person", "--inherited", "-o", fixture])
         .output()

@@ -1,17 +1,26 @@
 [package]
 name = "ontaria"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
-description = "Look up classes, properties, and resources in RDF Schema and OWL ontologies"
+rust-version = "1.88"
+description = "Parse RDF Schema and OWL ontologies and query them"
 license = "MIT"
 repository = "https://github.com/vbasky/ontaria"
 readme = "README.md"
 keywords = ["rdf", "owl", "json-ld", "ontology"]
-categories = ["command-line-utilities", "parser-implementations"]
+categories = ["parser-implementations"]
+
+[workspace]
+members = [".", "ontaria-cli"]
+resolver = "2"
+
+[features]
+default = ["fetch"]
+## Download ontologies with ureq. Turn this off for offline and embedded use.
+fetch = ["dep:ureq"]
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "now", "std"] }
-clap = { version = "4.6.7", features = ["derive"] }
 oxjsonld = "0.2.7"
 oxrdf = "0.3.5"
 oxrdfxml = "0.2.5"
@@ -20,4 +29,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 thiserror = "2.0.21"
-ureq = "3.5.1"
+toml = "0.9"
+ureq = { version = "3.5.1", optional = true }
+
+[package.metadata.docs.rs]
+features = ["fetch"]

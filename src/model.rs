@@ -35,6 +35,8 @@ pub struct Ontology {
     pub namespaces: BTreeMap<String, String>,
     /// Typed things in the file, such as a news article that uses the vocabulary.
     pub resources: Vec<Resource>,
+    /// Problems found while loading that did not stop the load.
+    pub warnings: Vec<String>,
 }
 
 /// One typed thing in a document. A schema.org news article is one of these,
@@ -125,6 +127,7 @@ impl Ontology {
             properties: BTreeMap::new(),
             namespaces,
             resources: Vec::new(),
+            warnings: Vec::new(),
         }
     }
 

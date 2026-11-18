@@ -1,7 +1,8 @@
 //! On-disk cache of ontology bytes.
 //!
-//! Files are `{sha256(url)}.ttl` plus `{sha256(url)}.meta.json` under
-//! `~/.ontaria/cache`.
+//! Files are `{sha256(url)}.ttl` plus `{sha256(url)}.meta.json`. The directory
+//! comes from `CacheManager::open`, then `ONTARIA_CACHE_DIR`, then the platform
+//! cache. An existing `~/.ontaria/cache` is still used.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -28,12 +29,7 @@ pub struct CacheManager {
 impl CacheManager {
     /// Open the shared user cache, creating it when it is missing.
     pub fn shared() -> Result<Self> {
-        let home = std::env::var_os("HOME").ok_or_else(|| {
-            Error::Message(
-                "HOME is not set, so the ontology cache path cannot be built".to_string(),
-            )
-        })?;
-        Self::open(Path::new(&home).join(".ontaria").join("cache"))
+        Self::open(default_cache_dir()?)
     }
 
     pub fn open(dir: impl Into<PathBuf>) -> Result<Self> {
@@ -93,7 +89,19 @@ impl CacheManager {
     }
 
     pub fn fetch(&self, url: &str) -> Result<CacheMetadata> {
-        let mut response = ureq::get(url)
+        #[cfg(not(feature = "fetch"))]
+        {
+            let _ = url;
+            return Err(Error::Feature {
+                feature: "fetch",
+                message:
+                    "network downloads are disabled; enable the `fetch` feature or use a local file"
+                        .to_string(),
+            });
+        }
+        #[cfg(feature = "fetch")]
+        {
+            let mut response = ureq::get(url)
             .header("User-Agent", "ontaria/0.1")
             .header(
                 "Accept",
@@ -101,15 +109,16 @@ impl CacheManager {
             )
             .call()
             .map_err(|err| Error::Fetch(err.to_string()))?;
-        let status = response.status().as_u16();
-        if status != 200 {
-            return Err(Error::HttpStatus(status));
+            let status = response.status().as_u16();
+            if status != 200 {
+                return Err(Error::HttpStatus(status));
+            }
+            let bytes = response
+                .body_mut()
+                .read_to_vec()
+                .map_err(|err| Error::Fetch(format!("failed to read response: {err}")))?;
+            self.save(url, &bytes)
         }
-        let bytes = response
-            .body_mut()
-            .read_to_vec()
-            .map_err(|err| Error::Fetch(format!("failed to read response: {err}")))?;
-        self.save(url, &bytes)
     }
 
     pub fn list(&self) -> Result<Vec<CacheMetadata>> {
@@ -147,6 +156,27 @@ impl CacheManager {
     fn meta_path(&self, url: &str) -> PathBuf {
         self.dir.join(format!("{}.meta.json", hash_url(url)))
     }
+}
+
+pub fn default_cache_dir() -> Result<PathBuf> {
+    if let Some(dir) = std::env::var_os("ONTARIA_CACHE_DIR") {
+        return Ok(PathBuf::from(dir));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        let legacy = Path::new(&home).join(".ontaria").join("cache");
+        if legacy.is_dir() {
+            return Ok(legacy);
+        }
+    }
+    if let Some(xdg) = std::env::var_os("XDG_CACHE_HOME") {
+        return Ok(PathBuf::from(xdg).join("ontaria"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return Ok(Path::new(&home).join(".cache").join("ontaria"));
+    }
+    Err(Error::Message(
+        "HOME is not set, so the ontology cache path cannot be built".to_string(),
+    ))
 }
 
 fn hash_url(url: &str) -> String {

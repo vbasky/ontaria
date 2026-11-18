@@ -9,19 +9,23 @@ Command-line tool for querying an RDF Schema or OWL ontology. It parses Turtle, 
 ## Build
 
 ```bash
-cargo build --release
+cargo build --release -p ontaria-cli
 # binary: target/release/ontaria
 ```
 
 Install it onto your `PATH` with:
 
 ```bash
-cargo install --path .
+cargo install --path ontaria-cli
 ```
+
+The library crate is `ontaria`. `Ontology::load` reads a document once and returns a value that can be shared as `Arc<Ontology>`. Query methods take `&self`. The `fetch` feature (on by default) is what links an HTTP client.
 
 ## Cache
 
-Ontologies are stored in `~/.ontaria/cache`:
+The cache directory is `--cache-dir`, `ONTARIA_CACHE_DIR`, `~/.ontaria/cache` when that directory already exists, or `$XDG_CACHE_HOME/ontaria` (`~/.cache/ontaria`).
+
+Ontologies are stored as:
 
 - `{sha256 of the url}.ttl` is the downloaded file
 - `{sha256 of the url}.meta.json` records the URL and download time
@@ -83,4 +87,4 @@ A JSON-LD `@context` of `https://schema.org` uses that vocabulary, so `headline`
 
 ## Library
 
-The same operations are available as the `ontaria` crate: `parse_document`, `parse_turtle`, `Ontology`, `CacheManager`, and `OntologyManager`.
+The same lookups are available as the `ontaria` crate: `Ontology::load`, `parse_document`, `parse_turtle`, `Ontology`, and `CacheManager`. The library does not print. `ontaria-cli` prints the JSON envelope.

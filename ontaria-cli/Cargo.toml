@@ -1,0 +1,19 @@
+[package]
+name = "ontaria-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Command-line tool for looking up ontology terms"
+license = "MIT"
+repository = "https://github.com/vbasky/ontaria"
+publish = false
+
+[[bin]]
+name = "ontaria"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.6.1", features = ["derive"] }
+ontaria = { path = ".." }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"

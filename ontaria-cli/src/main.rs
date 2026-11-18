@@ -1,11 +1,19 @@
+//! Ontaria command line. The library does the work. This crate only parses
+//! arguments and prints the JSON envelope.
+
 use std::fs;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use ontaria::{
-    CacheManager, Class, Ontology, OntologyManager, Property, SearchResults, load::existing_file,
-    load::file_url, load::load_ontology, print_error, print_success,
+    CacheManager, Class, LoadOptions, Ontology, Property, SearchResults, existing_file, file_url,
+    load_ontology,
 };
+
+mod output;
+
+use output::{print_error, print_success};
 
 #[derive(Parser)]
 #[command(
@@ -14,20 +22,31 @@ use ontaria::{
     about = "Look up classes and properties in an RDF Schema or OWL ontology"
 )]
 struct Cli {
-    /// Ontology URL, or a path to a local Turtle file.
+    /// Ontology URL, or a path to a local file.
     /// When omitted, the only cached ontology is used.
-    #[arg(short, long, global = true, value_name = "URL_OR_PATH")]
+    #[arg(short = 'o', long, global = true, value_name = "URL_OR_PATH")]
     ontology: Option<String>,
 
-    /// Follow owl:imports when a command looks up a term or searches.
+    /// Follow owl:imports while loading.
     #[arg(long, global = true)]
     imports: bool,
+
+    /// Cache directory. Overrides ONTARIA_CACHE_DIR.
+    #[arg(long, global = true, value_name = "DIR")]
+    cache_dir: Option<PathBuf>,
+
+    /// Offline catalog (TOML or OASIS XML) mapping import IRIs to local files.
+    #[arg(long, global = true, value_name = "FILE")]
+    catalog: Option<PathBuf>,
+
+    /// Do not use the network. A missing cache entry is an error.
+    #[arg(long, global = true)]
+    offline: bool,
 
     #[command(subcommand)]
     command: Command,
 }
 
-/// Which side of a search to keep. Omit it to return both.
 #[derive(Clone, Copy, ValueEnum)]
 enum Kind {
     Class,
@@ -39,81 +58,55 @@ enum Kind {
 enum Command {
     /// Download and cache an ontology. A local file path is cached too.
     Fetch {
-        /// Ontology URL, or a path to a local Turtle file.
         #[arg(value_name = "URL_OR_PATH")]
         url: String,
     },
     /// List cached ontologies.
     ListCached,
-    /// Get one class.
     GetClass {
-        /// IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM")]
         term: String,
-        /// Include properties inherited from parent classes.
         #[arg(long)]
         inherited: bool,
     },
-    /// Get one property.
     GetProperty {
-        /// IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM")]
         term: String,
-        /// Include the classes in the domain and range.
         #[arg(long)]
         usage: bool,
     },
-    /// Get the parent classes of a class.
     GetParents {
-        /// IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM")]
         term: String,
     },
-    /// Get the child classes of a class.
     GetChildren {
-        /// IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM")]
         term: String,
     },
-    /// Search classes and properties.
     Search {
-        /// Text matched against labels, comments, descriptions, and IRIs.
         #[arg(value_name = "QUERY")]
         query: String,
-        /// Return only classes or only properties.
         #[arg(long, value_enum, value_name = "KIND")]
         kind: Option<Kind>,
     },
-    /// List namespace prefixes.
     ListNamespaces,
-    /// List owl:imports declarations.
     ListImports,
-    /// List the typed things in the file, such as a news article.
     Resources,
-    /// List properties of a class, properties that reference it, and inherited properties.
     ListClassProperties {
-        /// IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM")]
         term: String,
     },
-    /// Get several classes. The result is a map keyed by each term.
     BatchGetClass {
-        /// One or more terms. Each may be an IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM", required = true)]
         terms: Vec<String>,
     },
-    /// Get several properties. The result is a map keyed by each term.
     BatchGetProperty {
-        /// One or more terms. Each may be an IRI, `prefix:Local`, local name, or label.
         #[arg(value_name = "TERM", required = true)]
         terms: Vec<String>,
     },
-    /// Search for several queries. The result is a map keyed by each query.
     BatchSearch {
-        /// One or more queries, matched against labels, comments, descriptions, and IRIs.
         #[arg(value_name = "QUERY", required = true)]
         queries: Vec<String>,
-        /// Return only classes or only properties.
         #[arg(long, value_enum, value_name = "KIND")]
         kind: Option<Kind>,
     },
@@ -133,28 +126,52 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(cli: Cli) -> ontaria::Result<()> {
-    let ontology = &cli.ontology;
-    let imports = cli.imports;
+    let options = options_from(&cli);
     match cli.command {
-        Command::Fetch { url } => fetch(&url),
-        Command::ListCached => list_cached(),
-        Command::GetClass { term, inherited } => get_class(ontology, &term, inherited, imports),
-        Command::GetProperty { term, usage } => get_property(ontology, &term, usage, imports),
-        Command::GetParents { term } => parents(ontology, &term, imports),
-        Command::GetChildren { term } => children(ontology, &term, imports),
-        Command::Search { query, kind } => search(ontology, &query, kind, imports),
-        Command::ListNamespaces => namespaces(ontology, imports),
-        Command::ListImports => imports_of(ontology, imports),
-        Command::Resources => resources(ontology, imports),
-        Command::ListClassProperties { term } => class_properties(ontology, &term, imports),
-        Command::BatchGetClass { terms } => batch_classes(ontology, &terms, imports),
-        Command::BatchGetProperty { terms } => batch_properties(ontology, &terms, imports),
-        Command::BatchSearch { queries, kind } => batch_search(ontology, &queries, kind, imports),
+        Command::Fetch { url } => fetch(&options, &url, cli.offline),
+        Command::ListCached => list_cached(&options),
+        Command::GetClass { term, inherited } => {
+            get_class(&cli.ontology, &term, inherited, &options)
+        }
+        Command::GetProperty { term, usage } => get_property(&cli.ontology, &term, usage, &options),
+        Command::GetParents { term } => parents(&cli.ontology, &term, &options),
+        Command::GetChildren { term } => children(&cli.ontology, &term, &options),
+        Command::Search { query, kind } => search(&cli.ontology, &query, kind, &options),
+        Command::ListNamespaces => namespaces(&cli.ontology, &options),
+        Command::ListImports => imports_of(&cli.ontology, &options),
+        Command::Resources => resources(&cli.ontology, &options),
+        Command::ListClassProperties { term } => class_properties(&cli.ontology, &term, &options),
+        Command::BatchGetClass { terms } => batch_classes(&cli.ontology, &terms, &options),
+        Command::BatchGetProperty { terms } => batch_properties(&cli.ontology, &terms, &options),
+        Command::BatchSearch { queries, kind } => {
+            batch_search(&cli.ontology, &queries, kind, &options)
+        }
     }
 }
 
-fn fetch(url: &str) -> ontaria::Result<()> {
-    let cache = CacheManager::shared()?;
+fn options_from(cli: &Cli) -> LoadOptions {
+    LoadOptions {
+        follow_imports: cli.imports,
+        cache_dir: cli.cache_dir.clone(),
+        catalog_path: cli.catalog.clone(),
+        allow_network: false,
+    }
+}
+
+fn open_cache(options: &LoadOptions) -> ontaria::Result<CacheManager> {
+    match &options.cache_dir {
+        Some(dir) => CacheManager::open(dir),
+        None => CacheManager::shared(),
+    }
+}
+
+fn fetch(options: &LoadOptions, url: &str, offline: bool) -> ontaria::Result<()> {
+    if offline {
+        return Err(ontaria::Error::Message(
+            "fetch needs the network; omit --offline".to_string(),
+        ));
+    }
+    let cache = open_cache(options)?;
     let meta = if let Some(path) = existing_file(url) {
         let bytes = fs::read(&path).map_err(|source| ontaria::Error::Read {
             path: path.clone(),
@@ -167,8 +184,8 @@ fn fetch(url: &str) -> ontaria::Result<()> {
     print_success(&meta, &[])
 }
 
-fn list_cached() -> ontaria::Result<()> {
-    let cached = CacheManager::shared()?.list()?;
+fn list_cached(options: &LoadOptions) -> ontaria::Result<()> {
+    let cached = open_cache(options)?.list()?;
     print_success(&cached, &[])
 }
 
@@ -176,9 +193,9 @@ fn get_class(
     spec: &Option<String>,
     term: &str,
     inherited: bool,
-    imports: bool,
+    options: &LoadOptions,
 ) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let (ontology, warnings) = ontology_for(spec, options)?;
     if inherited {
         let details = ontology
             .get_class_with_inherited_properties(term)
@@ -193,9 +210,9 @@ fn get_property(
     spec: &Option<String>,
     term: &str,
     usage: bool,
-    imports: bool,
+    options: &LoadOptions,
 ) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let (ontology, warnings) = ontology_for(spec, options)?;
     if usage {
         let usage = ontology
             .get_property_with_usage(term)
@@ -206,16 +223,16 @@ fn get_property(
     print_success(property, &warnings)
 }
 
-fn parents(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn parents(spec: &Option<String>, term: &str, options: &LoadOptions) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let parents = ontology
         .get_parents(term)
         .ok_or_else(|| missing_err("class", term))?;
     print_success(&parents, &warnings)
 }
 
-fn children(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn children(spec: &Option<String>, term: &str, options: &LoadOptions) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let children = ontology
         .get_children(term)
         .ok_or_else(|| missing_err("class", term))?;
@@ -226,38 +243,46 @@ fn search(
     spec: &Option<String>,
     query: &str,
     kind: Option<Kind>,
-    imports: bool,
+    options: &LoadOptions,
 ) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let results = filter_search(ontology.search(query), kind);
     print_success(&results, &warnings)
 }
 
-fn namespaces(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn namespaces(spec: &Option<String>, options: &LoadOptions) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     print_success(&ontology.namespaces, &warnings)
 }
 
-fn imports_of(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn imports_of(spec: &Option<String>, options: &LoadOptions) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     print_success(&ontology.imports, &warnings)
 }
 
-fn resources(spec: &Option<String>, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn resources(spec: &Option<String>, options: &LoadOptions) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     print_success(&ontology.resources, &warnings)
 }
 
-fn class_properties(spec: &Option<String>, term: &str, imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn class_properties(
+    spec: &Option<String>,
+    term: &str,
+    options: &LoadOptions,
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let result = ontology
         .get_class_properties(term)
         .ok_or_else(|| missing_err("class", term))?;
     print_success(&result, &warnings)
 }
 
-fn batch_classes(spec: &Option<String>, terms: &[String], imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn batch_classes(
+    spec: &Option<String>,
+    terms: &[String],
+    options: &LoadOptions,
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let mut map = serde_json::Map::new();
     for term in terms {
         let value = match ontology.get_class(term).cloned() {
@@ -269,8 +294,12 @@ fn batch_classes(spec: &Option<String>, terms: &[String], imports: bool) -> onta
     print_success(&map, &warnings)
 }
 
-fn batch_properties(spec: &Option<String>, terms: &[String], imports: bool) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+fn batch_properties(
+    spec: &Option<String>,
+    terms: &[String],
+    options: &LoadOptions,
+) -> ontaria::Result<()> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let mut map = serde_json::Map::new();
     for term in terms {
         let value = match ontology.get_property(term).cloned() {
@@ -286,9 +315,9 @@ fn batch_search(
     spec: &Option<String>,
     queries: &[String],
     kind: Option<Kind>,
-    imports: bool,
+    options: &LoadOptions,
 ) -> ontaria::Result<()> {
-    let (ontology, warnings) = ontology_for(spec, imports)?;
+    let (ontology, warnings) = ontology_for(spec, options)?;
     let mut map = serde_json::Map::new();
     for query in queries {
         let results = filter_search(ontology.search(query), kind);
@@ -300,17 +329,12 @@ fn batch_search(
     print_success(&map, &warnings)
 }
 
-fn ontology_for(spec: &Option<String>, imports: bool) -> ontaria::Result<(Ontology, Vec<String>)> {
-    let loaded = load_ontology(spec.as_deref())?;
-    if !imports {
-        return Ok((loaded.ontology, loaded.warnings));
-    }
-    let mut manager = OntologyManager::new(loaded.ontology, loaded.cache);
-    let ontology = manager.merged();
-    Ok((
-        ontology,
-        join_warnings(&loaded.warnings, manager.warnings()),
-    ))
+fn ontology_for(
+    spec: &Option<String>,
+    options: &LoadOptions,
+) -> ontaria::Result<(Ontology, Vec<String>)> {
+    let loaded = load_ontology(spec.as_deref(), options)?;
+    Ok((loaded.ontology, loaded.warnings))
 }
 
 fn filter_search(mut results: SearchResults, kind: Option<Kind>) -> SearchResults {
@@ -336,10 +360,4 @@ fn require_property<'a>(ontology: &'a Ontology, term: &str) -> ontaria::Result<&
 
 fn missing_err(kind: &str, name: &str) -> ontaria::Error {
     ontaria::Error::Message(format!("{kind} not found: {name}"))
-}
-
-fn join_warnings(first: &[String], second: &[String]) -> Vec<String> {
-    let mut warnings = first.to_vec();
-    warnings.extend(second.iter().cloned());
-    warnings
 }
