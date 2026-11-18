@@ -7,6 +7,8 @@
 //! # Features
 //!
 //! * `fetch` — download ontologies with `ureq` (on by default).
+//! * `shacl` — SHACL validation through `shacl-rust`.
+//! * `codegen` — re-export the [`terms!`](crate::terms) proc macro.
 //!
 //! # Examples
 //!
@@ -37,6 +39,7 @@ mod manager;
 mod model;
 mod parser;
 mod query;
+mod shacl;
 mod validate;
 mod vocab;
 
@@ -54,6 +57,7 @@ pub use model::{
     ResourceValue, Statement, TermKind,
 };
 pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle, parse_with_format};
+pub use shacl::validate_shacl;
 pub use validate::{
     Severity, ValidationIssue, ValidationReport, validate_graph, validate_json, validate_rdf,
     validate_statements,

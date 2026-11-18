@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- `validate --shacl` checks RDF instance data against SHACL shapes. The `shacl` feature uses `shacl-rust`. Without it, `validate_shacl` returns `Error::Feature`.
+- `validate --turtle` prints a W3C SHACL ValidationReport.
+- `ontaria mcp` exposes lookup, search, hierarchy, validate, and diff on stdio. Build the CLI with `--features mcp`. Logs go to stderr.
+- `ontaria serve --bind` is a read-only HTTP API. The default bind is `127.0.0.1:8080`.
+- `skills/ontaria/SKILL.md` describes the CLI and the MCP tools.
+
 ## 0.4.0
 
 - `diff` classifies added, removed, and changed terms and suggests a semver bump. `--fail-on breaking` exits 1 when the bump is major.

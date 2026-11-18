@@ -11,7 +11,10 @@ use ontaria::{
     existing_file, file_url,
 };
 
+#[cfg(feature = "mcp")]
+mod mcp;
 mod output;
+mod serve;
 
 use output::{print_error, print_success};
 
@@ -19,7 +22,7 @@ use output::{print_error, print_success};
 #[command(
     name = "ontaria",
     version,
-    about = "Look up classes and properties in an RDF Schema or OWL ontology"
+    about = "Look up, validate, diff, and serve an RDF Schema or OWL ontology"
 )]
 struct Cli {
     /// Ontology URL, or a path to a local file.
@@ -126,6 +129,12 @@ enum Command {
     Validate {
         #[arg(value_name = "DATA")]
         data: PathBuf,
+        /// SHACL shapes file. Requires the `shacl` feature.
+        #[arg(long, value_name = "SHAPES")]
+        shacl: Option<PathBuf>,
+        /// Print a Turtle ValidationReport instead of the JSON envelope.
+        #[arg(long)]
+        turtle: bool,
     },
     /// Generate a JSON-LD context or Rust constants.
     Gen {
@@ -145,6 +154,14 @@ enum Command {
         /// Exit 1 on warnings when the value is `warnings`.
         #[arg(long, value_name = "warnings")]
         deny: Option<String>,
+    },
+    /// Serve lookup, search, validate, and diff over MCP stdio.
+    #[cfg(feature = "mcp")]
+    Mcp,
+    /// Read-only HTTP API.
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:8080")]
+        bind: String,
     },
 }
 
@@ -197,7 +214,13 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
         Command::BatchSearch { queries, kind } => {
             batch_search(&cli.ontology, &queries, kind, &options)?
         }
-        Command::Validate { data } => return validate(&cli.ontology, &options, &data),
+        Command::Validate {
+            data,
+            shacl,
+            turtle,
+        } => {
+            return validate(&cli.ontology, &options, &data, shacl.as_deref(), turtle);
+        }
         Command::Gen { target } => generate(&cli.ontology, &options, target)?,
         Command::Diff {
             before,
@@ -205,6 +228,15 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
             fail_on,
         } => return diff_files(&before, &after, fail_on.as_deref()),
         Command::Lint { deny } => return lint_file(&cli.ontology, &options, deny.as_deref()),
+        #[cfg(feature = "mcp")]
+        Command::Mcp => {
+            let (ontology, _) = ontology_for(&cli.ontology, &options)?;
+            return mcp::serve(ontology);
+        }
+        Command::Serve { bind } => {
+            let (ontology, _) = ontology_for(&cli.ontology, &options)?;
+            return serve::serve(ontology, &bind);
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -469,21 +501,43 @@ fn validate(
     spec: &Option<String>,
     options: &LoadOptions,
     data: &Path,
+    shapes: Option<&Path>,
+    turtle: bool,
 ) -> ontaria::Result<ExitCode> {
     let (ontology, warnings) = ontology_for(spec, options)?;
     let bytes = fs::read(data).map_err(|source| ontaria::Error::Read {
         path: data.to_path_buf(),
         source,
     })?;
-    let report = if looks_like_json(&bytes) {
+    let mut report = if looks_like_json(&bytes) {
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|err| ontaria::Error::message(format!("invalid JSON: {err}")))?;
         ontaria::validate_json(&ontology, &value)
     } else {
         ontaria::validate_rdf(&ontology, &bytes, &data.display().to_string())?
     };
+    if let Some(shapes) = shapes {
+        let shape_bytes = fs::read(shapes).map_err(|source| ontaria::Error::Read {
+            path: shapes.to_path_buf(),
+            source,
+        })?;
+        let shape_ontology = ontaria::parse_document(&shape_bytes, &shapes.display().to_string())?;
+        let data_ontology = if looks_like_json(&bytes) {
+            return Err(ontaria::Error::message(
+                "SHACL validation needs RDF instance data, not JSON",
+            ));
+        } else {
+            ontaria::parse_document(&bytes, &data.display().to_string())?
+        };
+        let shacl = ontaria::validate_shacl(&shape_ontology, &data_ontology)?;
+        report.issues.extend(shacl.issues);
+    }
     let failed = report.has_errors();
-    print_success(&report, &warnings)?;
+    if turtle {
+        print_success(report.to_turtle(), &warnings)?;
+    } else {
+        print_success(&report, &warnings)?;
+    }
     Ok(if failed {
         ExitCode::from(1)
     } else {
