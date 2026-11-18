@@ -19,24 +19,32 @@
 //! let ontology = ontaria::parse_document(ttl, "http://example.org/").unwrap();
 //! assert_eq!(ontology.get_class("Person").unwrap().label, "Person");
 //! ```
+//!
+//! The minimum supported Rust version is 1.88.
+
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod cache;
 mod catalog;
 mod error;
-pub mod load;
+mod extract;
+mod load;
 mod manager;
 mod model;
 mod parser;
 mod query;
+mod vocab;
 
-pub use cache::{CacheManager, CacheMetadata, default_cache_dir};
+pub use cache::{CacheManager, CacheMetadata, FetchLimits, VerifyReport, default_cache_dir};
 pub use catalog::Catalog;
-pub use error::{Error, Result};
-pub use load::{LoadOptions, Loaded, existing_file, file_url, load_ontology};
+pub use error::{Error, Result, Warning, WarningCode};
+pub use load::{LoadOptions, Loaded, existing_file, file_url, is_remote, load_ontology, parse_age};
 pub use model::{
-    Class, Ontology, Property, PropertyRef, PropertyType, Resource, ResourceValue, TermKind,
+    Annotation, Class, ClassExpression, Concept, ConceptScheme, Fact, Individual, LangPref,
+    LangString, Ontology, OntologyMetadata, Property, PropertyRef, PropertyType, Resource,
+    ResourceValue, Statement, TermKind,
 };
-pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle};
+pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle, parse_with_format};
 pub use query::{
     ClassDetails, ClassPropertiesResult, PropertyDetails, PropertyUsage, SearchResults,
 };

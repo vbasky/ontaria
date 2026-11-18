@@ -1,6 +1,6 @@
 [package]
 name = "ontaria"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Parse RDF Schema and OWL ontologies and query them"
@@ -20,7 +20,6 @@ default = ["fetch"]
 fetch = ["dep:ureq"]
 
 [dependencies]
-chrono = { version = "0.4.45", default-features = false, features = ["clock", "now", "std"] }
 oxjsonld = "0.2.7"
 oxrdf = "0.3.5"
 oxrdfxml = "0.2.5"

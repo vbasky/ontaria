@@ -21,7 +21,7 @@ pub struct OntologyManager {
     warnings: Vec<String>,
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
+#[allow(dead_code)]
 impl OntologyManager {
     pub fn new(main: Ontology, cache: CacheManager) -> Self {
         Self {
@@ -108,6 +108,8 @@ impl OntologyManager {
             for found in extras {
                 results.classes.extend(found.classes);
                 results.properties.extend(found.properties);
+                results.concepts.extend(found.concepts);
+                results.individuals.extend(found.individuals);
             }
         }
         results

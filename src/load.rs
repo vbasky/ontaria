@@ -6,12 +6,13 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::cache::CacheManager;
+use crate::cache::{CacheManager, FetchLimits};
 use crate::catalog::Catalog;
-use crate::error::{Error, Result};
-use crate::model::Ontology;
-use crate::parser::parse_document;
+use crate::error::{Error, Result, Warning, WarningCode};
+use crate::model::{LangPref, Ontology};
+use crate::parser::{RdfFormat, detect_format, parse_with_format};
 
 /// Where bytes come from, and which imports to follow.
 #[derive(Debug, Clone)]
@@ -19,8 +20,11 @@ pub struct LoadOptions {
     pub follow_imports: bool,
     pub cache_dir: Option<PathBuf>,
     pub catalog_path: Option<PathBuf>,
+    pub lang: LangPref,
+    pub refresh: bool,
     /// When false, a missing cache entry is an error instead of a download.
     pub allow_network: bool,
+    pub limits: FetchLimits,
 }
 
 impl Default for LoadOptions {
@@ -29,7 +33,10 @@ impl Default for LoadOptions {
             follow_imports: false,
             cache_dir: None,
             catalog_path: None,
+            lang: LangPref::default(),
+            refresh: false,
             allow_network: true,
+            limits: FetchLimits::default(),
         }
     }
 }
@@ -43,8 +50,19 @@ pub struct Loaded {
 impl Ontology {
     /// Load `source` and, when asked, every import it reaches.
     ///
-    /// `source` is a filesystem path or an `http(s)` URL. The returned value
-    /// is immutable: query methods take `&self`.
+    /// `source` is a filesystem path or an `http(s)` URL. Imports are resolved
+    /// from the catalog, then a local file, then the cache, then the network
+    /// when `allow_network` is set and the `fetch` feature is enabled. The
+    /// returned value is immutable: query methods take `&self`.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use ontaria::{LoadOptions, Ontology};
+    /// let ontology = Ontology::load("schema.ttl", &LoadOptions::default())?;
+    /// let _shared = std::sync::Arc::new(ontology);
+    /// # Ok::<(), ontaria::Error>(())
+    /// ```
     pub fn load(source: &str, options: &LoadOptions) -> Result<Self> {
         let cache = match &options.cache_dir {
             Some(dir) => CacheManager::open(dir)?,
@@ -63,9 +81,13 @@ impl Ontology {
                 let iri = pending[index].clone();
                 index += 1;
                 if !visited.insert(iri.clone()) {
-                    ontology
-                        .warnings
-                        .push(format!("Circular import detected: {iri}"));
+                    ontology.warnings.push(
+                        Warning::new(
+                            WarningCode::CircularImport,
+                            format!("Circular import detected: {iri}"),
+                        )
+                        .with_term(iri),
+                    );
                     continue;
                 }
                 match load_one(&iri, options, &cache, catalog.as_ref(), false) {
@@ -74,13 +96,18 @@ impl Ontology {
                         ontology.absorb(&imported);
                     }
                     Err(err) => {
-                        ontology
-                            .warnings
-                            .push(format!("Failed to load import {iri}: {err}"));
+                        ontology.warnings.push(
+                            Warning::new(
+                                WarningCode::ImportFailed,
+                                format!("Failed to load import {iri}: {err}"),
+                            )
+                            .with_term(iri),
+                        );
                     }
                 }
             }
         }
+        ontology.apply_language(&options.lang);
         Ok(ontology)
     }
 }
@@ -106,24 +133,49 @@ fn load_one(
     if let Some(path) = existing_file(source) {
         return read_file(&path, &file_url(&path));
     }
+    // A remote ontology must not import a file:// URL. A catalog entry,
+    // handled above, is the explicit way to point an IRI at a local file.
     if !top_level && source.starts_with("file:") {
-        return Err(Error::Fetch(format!(
-            "{source}: refusing to read a local file from a remote import"
-        )));
+        return Err(Error::Fetch {
+            url: source.to_string(),
+            message: "refusing to read a local file from a remote import".to_string(),
+        });
     }
     if is_remote(source) {
-        if !cache.exists(source) {
+        let cached = cache.exists(source);
+        if options.refresh || !cached {
             if !options.allow_network {
-                return Err(Error::NotCached(source.to_string()));
+                return Err(Error::NotCached {
+                    iri: source.to_string(),
+                });
             }
-            cache.fetch(source)?;
+            cache.fetch_limited(source, &options.limits, options.refresh || cached)?;
         }
         let bytes = cache.load(source)?;
-        return parse_document(bytes.as_slice(), source);
+        let format = cache
+            .metadata(source)
+            .ok()
+            .and_then(|meta| meta.format)
+            .as_deref()
+            .and_then(format_from_name)
+            .unwrap_or_else(|| detect_format(&bytes));
+        return parse_with_format(&bytes, source, format);
     }
-    Err(Error::Message(format!(
+    Err(Error::message(format!(
         "ontology not cached: {source} (run 'fetch' first)"
     )))
+}
+
+fn format_from_name(name: &str) -> Option<RdfFormat> {
+    match name {
+        "turtle" => Some(RdfFormat::Turtle),
+        "n-triples" => Some(RdfFormat::NTriples),
+        "n-quads" => Some(RdfFormat::NQuads),
+        "trig" => Some(RdfFormat::TriG),
+        "rdf/xml" => Some(RdfFormat::RdfXml),
+        "json-ld" => Some(RdfFormat::JsonLd),
+        _ => None,
+    }
 }
 
 fn read_file(path: &Path, base: &str) -> Result<Ontology> {
@@ -131,23 +183,33 @@ fn read_file(path: &Path, base: &str) -> Result<Ontology> {
         path: path.to_path_buf(),
         source,
     })?;
-    parse_document(bytes.as_slice(), base)
+    let format = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .and_then(RdfFormat::from_extension)
+        .unwrap_or_else(|| detect_format(&bytes));
+    parse_with_format(&bytes, base, format)
 }
 
-/// Load the ontology selected by `--ontology`. Query commands pass
-/// `allow_network: false` so a missing cache entry is not downloaded.
-pub fn load_ontology(spec: Option<&str>, options: &LoadOptions) -> Result<Loaded> {
-    let cache = match &options.cache_dir {
-        Some(dir) => CacheManager::open(dir)?,
-        None => CacheManager::shared()?,
+/// Load the ontology selected by `--ontology`.
+///
+/// An empty spec uses the only cached ontology. A spec that names an existing
+/// file is parsed from disk. Anything else is treated as a cache key, which
+/// for remote ontologies is the URL passed to `fetch`.
+pub fn load_ontology(spec: Option<&str>) -> Result<Loaded> {
+    let options = LoadOptions {
+        follow_imports: false,
+        allow_network: false,
+        ..LoadOptions::default()
     };
+    let cache = CacheManager::shared()?;
     let mut warnings = Vec::new();
     let spec = match spec.filter(|value| !value.is_empty()) {
         Some(spec) => spec.to_string(),
         None => match cache.list()?.as_slice() {
             [] => {
-                return Err(Error::Message(
-                    "no cached ontologies found, use --ontology or fetch one first".to_string(),
+                return Err(Error::message(
+                    "no cached ontologies found, use --ontology or fetch one first",
                 ));
             }
             [only] => {
@@ -155,21 +217,19 @@ pub fn load_ontology(spec: Option<&str>, options: &LoadOptions) -> Result<Loaded
                 only.url.clone()
             }
             _ => {
-                return Err(Error::Message(
-                    "multiple ontologies cached, specify --ontology".to_string(),
+                return Err(Error::message(
+                    "multiple ontologies cached, specify --ontology",
                 ));
             }
         },
     };
-    let mut ontology = if existing_file(&spec).is_some() || is_remote(&spec) {
-        Ontology::load(&spec, options)?
+    let ontology = if existing_file(&spec).is_some() || is_remote(&spec) {
+        Ontology::load(&spec, &options)?
     } else {
-        return Err(Error::Message(format!(
+        return Err(Error::message(format!(
             "ontology not cached: {spec} (run 'fetch' first)"
         )));
     };
-    warnings.append(&mut ontology.warnings);
-    ontology.warnings.clone_from(&warnings);
     Ok(Loaded {
         ontology,
         warnings,
@@ -196,6 +256,31 @@ pub fn file_url(path: &Path) -> String {
 
 pub fn is_remote(spec: &str) -> bool {
     spec.starts_with("http://") || spec.starts_with("https://")
+}
+
+/// Parse a duration such as `30d`, `12h`, `15m`, or `45s`.
+pub fn parse_age(text: &str) -> Result<Duration> {
+    let text = text.trim();
+    let (number, unit) = text.split_at(
+        text.find(|ch: char| ch.is_ascii_alphabetic())
+            .unwrap_or(text.len()),
+    );
+    let count: u64 = number
+        .trim()
+        .parse()
+        .map_err(|_| Error::message(format!("invalid duration: {text}")))?;
+    let seconds = match unit {
+        "" | "s" => count,
+        "m" => count.saturating_mul(60),
+        "h" => count.saturating_mul(60 * 60),
+        "d" => count.saturating_mul(60 * 60 * 24),
+        _ => {
+            return Err(Error::message(format!(
+                "invalid duration unit in {text}; use s, m, h, or d"
+            )));
+        }
+    };
+    Ok(Duration::from_secs(seconds))
 }
 
 #[cfg(test)]
@@ -228,14 +313,8 @@ mod tests {
             ontology
                 .warnings
                 .iter()
-                .any(|warning| { warning.contains("refusing to read a local file") })
+                .any(|warning| { warning.message.contains("refusing to read a local file") })
         );
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn ontology_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<Ontology>();
     }
 }

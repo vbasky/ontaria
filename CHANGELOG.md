@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0
+
+- The model keeps RDFS, OWL, and SKOS terms: equivalents, disjointness, boolean class expressions, property characteristics, qualified restrictions, individuals, concepts, and ontology metadata.
+- Every language tag is kept. `--lang` selects a preference. The default is language-less, then English, then the first value.
+- N-Triples, N-Quads, and TriG parse alongside Turtle, RDF/XML, and JSON-LD. Named graphs are merged and reported as a warning.
+- Warnings are objects with a code and a message.
+
 ## 0.1.0
 
 - The `ontaria` crate is a library. The `ontaria` binary lives in `ontaria-cli` and is the only crate that prints.

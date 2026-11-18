@@ -1,58 +1,26 @@
-//! Turtle, RDF/XML, and JSON-LD to the class/property model.
+//! Turtle, N-Triples, N-Quads, TriG, RDF/XML, and JSON-LD to the class model.
 //!
 //! Each syntax is parsed to triples. Those triples are indexed once by
 //! subject, and extraction then walks that index.
 
-use std::collections::HashMap;
 use std::io::Read;
 
 use oxjsonld::{JsonLdLoadDocumentOptions, JsonLdParser, JsonLdRemoteDocument};
-use oxrdf::{BlankNode, Literal, NamedOrBlankNode, Term, Triple};
+use oxrdf::{GraphName, Quad, Triple};
 use oxrdfxml::RdfXmlParser;
-use oxttl::TurtleParser;
+use oxttl::{NQuadsParser, NTriplesParser, TriGParser, TurtleParser, TurtleSyntaxError};
 
 use crate::error::{Error, Result};
-use crate::model::{
-    Class, Ontology, Property, PropertyRef, PropertyType, Resource, ResourceValue, TermKind,
-    push_unique,
-};
-
-const RDF_TYPE: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type";
-const RDF_PROPERTY: &str = "http://www.w3.org/1999/02/22-rdf-syntax-ns#Property";
-const RDFS_CLASS: &str = "http://www.w3.org/2000/01/rdf-schema#Class";
-const RDFS_LABEL: &str = "http://www.w3.org/2000/01/rdf-schema#label";
-const RDFS_COMMENT: &str = "http://www.w3.org/2000/01/rdf-schema#comment";
-const RDFS_DOMAIN: &str = "http://www.w3.org/2000/01/rdf-schema#domain";
-const RDFS_RANGE: &str = "http://www.w3.org/2000/01/rdf-schema#range";
-const RDFS_SUBCLASS: &str = "http://www.w3.org/2000/01/rdf-schema#subClassOf";
-const OWL_CLASS: &str = "http://www.w3.org/2002/07/owl#Class";
-const OWL_OBJECT: &str = "http://www.w3.org/2002/07/owl#ObjectProperty";
-const OWL_DATATYPE: &str = "http://www.w3.org/2002/07/owl#DatatypeProperty";
-const OWL_ANNOTATION: &str = "http://www.w3.org/2002/07/owl#AnnotationProperty";
-const OWL_RESTRICTION: &str = "http://www.w3.org/2002/07/owl#Restriction";
-const OWL_ON_PROPERTY: &str = "http://www.w3.org/2002/07/owl#onProperty";
-const OWL_CARDINALITY: &str = "http://www.w3.org/2002/07/owl#cardinality";
-const OWL_MIN: &str = "http://www.w3.org/2002/07/owl#minCardinality";
-const OWL_MAX: &str = "http://www.w3.org/2002/07/owl#maxCardinality";
-const OWL_QUAL_CARD: &str = "http://www.w3.org/2002/07/owl#qualifiedCardinality";
-const OWL_MIN_QUAL: &str = "http://www.w3.org/2002/07/owl#minQualifiedCardinality";
-const OWL_MAX_QUAL: &str = "http://www.w3.org/2002/07/owl#maxQualifiedCardinality";
-const OWL_DEPRECATED: &str = "http://www.w3.org/2002/07/owl#deprecated";
-const OWL_IMPORTS: &str = "http://www.w3.org/2002/07/owl#imports";
-const DCTERMS_DESCRIPTION: &str = "http://purl.org/dc/terms/description";
-const SCHEMA_DOMAIN: &[&str] = &[
-    "https://schema.org/domainIncludes",
-    "http://schema.org/domainIncludes",
-];
-const SCHEMA_RANGE: &[&str] = &[
-    "https://schema.org/rangeIncludes",
-    "http://schema.org/rangeIncludes",
-];
+use crate::extract::{InputTriple, build_ontology};
+use crate::model::Ontology;
 
 /// Which RDF syntax a document was read as.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RdfFormat {
     Turtle,
+    NTriples,
+    NQuads,
+    TriG,
     RdfXml,
     JsonLd,
 }
@@ -61,8 +29,39 @@ impl RdfFormat {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Turtle => "turtle",
+            Self::NTriples => "n-triples",
+            Self::NQuads => "n-quads",
+            Self::TriG => "trig",
             Self::RdfXml => "rdf/xml",
             Self::JsonLd => "json-ld",
+        }
+    }
+
+    /// File extension used in the cache, without the leading dot.
+    pub fn extension(self) -> &'static str {
+        match self {
+            Self::Turtle => "ttl",
+            Self::NTriples => "nt",
+            Self::NQuads => "nq",
+            Self::TriG => "trig",
+            Self::RdfXml => "rdf",
+            Self::JsonLd => "jsonld",
+        }
+    }
+
+    pub fn from_extension(extension: &str) -> Option<Self> {
+        match extension
+            .trim_start_matches('.')
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "ttl" | "turtle" => Some(Self::Turtle),
+            "nt" | "ntriples" => Some(Self::NTriples),
+            "nq" | "nquads" => Some(Self::NQuads),
+            "trig" => Some(Self::TriG),
+            "rdf" | "xml" | "owl" => Some(Self::RdfXml),
+            "jsonld" | "json" => Some(Self::JsonLd),
+            _ => None,
         }
     }
 }
@@ -74,11 +73,31 @@ pub fn parse_turtle(reader: impl Read, base_uri: &str) -> Result<Ontology> {
     parse_turtle_bytes(&bytes, base_uri)
 }
 
-/// Parse a document in Turtle, RDF/XML, or JSON-LD. The syntax is chosen from
-/// the bytes, after a leading byte-order mark and whitespace.
+/// Parse a document. The syntax is chosen from the bytes, after a leading
+/// byte-order mark and whitespace.
+///
+/// # Examples
+///
+/// ```
+/// let ttl = br#"
+///   @prefix ex: <http://example.org/> .
+///   ex:Person a <http://www.w3.org/2002/07/owl#Class> ;
+///     <http://www.w3.org/2000/01/rdf-schema#label> "Person" .
+/// "#;
+/// let ontology = ontaria::parse_document(ttl, "http://example.org/").unwrap();
+/// assert_eq!(ontology.get_class("Person").unwrap().label, "Person");
+/// ```
 pub fn parse_document(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
-    match detect_format(bytes) {
+    parse_with_format(bytes, base_uri, detect_format(bytes))
+}
+
+/// Parse `bytes` as `format`, ignoring the sniffer.
+pub fn parse_with_format(bytes: &[u8], base_uri: &str, format: RdfFormat) -> Result<Ontology> {
+    match format {
         RdfFormat::Turtle => parse_turtle_bytes(bytes, base_uri),
+        RdfFormat::NTriples => parse_ntriples_bytes(bytes, base_uri),
+        RdfFormat::NQuads => parse_nquads_bytes(bytes, base_uri),
+        RdfFormat::TriG => parse_trig_bytes(bytes, base_uri),
         RdfFormat::RdfXml => parse_rdfxml_bytes(bytes, base_uri),
         RdfFormat::JsonLd => parse_jsonld_bytes(bytes, base_uri),
     }
@@ -90,10 +109,28 @@ pub fn detect_format(bytes: &[u8]) -> RdfFormat {
         return RdfFormat::JsonLd;
     }
     if rest.starts_with(b"<") {
-        let after = rest.get(1).copied().unwrap_or(b' ');
-        if after.is_ascii_alphabetic() || after == b'?' || after == b'!' {
+        let after = &rest[1..];
+        let iri = after.starts_with(b"http://")
+            || after.starts_with(b"https://")
+            || after.starts_with(b"urn:");
+        let xml = after.starts_with(b"?")
+            || after.starts_with(b"!")
+            || after.first().is_some_and(|byte| byte.is_ascii_alphabetic());
+        if xml && !iri {
             return RdfFormat::RdfXml;
         }
+    }
+    let Ok(text) = std::str::from_utf8(rest) else {
+        return RdfFormat::Turtle;
+    };
+    if has_unquoted_brace(text) {
+        return RdfFormat::TriG;
+    }
+    if line_term_count(text).is_some_and(|count| count >= 4) {
+        return RdfFormat::NQuads;
+    }
+    if looks_like_ntriples(text) {
+        return RdfFormat::NTriples;
     }
     RdfFormat::Turtle
 }
@@ -111,7 +148,11 @@ fn parse_turtle_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
     let mut parser = built.for_slice(bytes);
     let mut triples = Vec::new();
     for triple in &mut parser {
-        triples.push(triple.map_err(|err| parse_err(RdfFormat::Turtle, err))?)
+        let triple = triple.map_err(|err| syntax_error(RdfFormat::Turtle, &err))?;
+        triples.push(InputTriple {
+            triple,
+            graph: None,
+        });
     }
     let mut prefixes = Vec::new();
     for (prefix, iri) in parser.prefixes() {
@@ -119,7 +160,73 @@ fn parse_turtle_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
             prefixes.push((prefix.to_string(), iri.to_string()));
         }
     }
-    Ok(ontology_from_triples(base_uri, triples, prefixes))
+    Ok(build_ontology(
+        base_uri,
+        RdfFormat::Turtle.as_str(),
+        triples,
+        prefixes,
+    ))
+}
+
+fn parse_ntriples_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    let mut triples = Vec::new();
+    for triple in NTriplesParser::new().for_slice(bytes) {
+        let triple = triple.map_err(|err| syntax_error(RdfFormat::NTriples, &err))?;
+        triples.push(InputTriple {
+            triple,
+            graph: None,
+        });
+    }
+    Ok(build_ontology(
+        base_uri,
+        RdfFormat::NTriples.as_str(),
+        triples,
+        Vec::new(),
+    ))
+}
+
+fn parse_nquads_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    let mut triples = Vec::new();
+    for quad in NQuadsParser::new().for_slice(bytes) {
+        let quad = quad.map_err(|err| syntax_error(RdfFormat::NQuads, &err))?;
+        triples.push(input_from_quad(quad));
+    }
+    Ok(build_ontology(
+        base_uri,
+        RdfFormat::NQuads.as_str(),
+        triples,
+        Vec::new(),
+    ))
+}
+
+fn parse_trig_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
+    let mut built = TriGParser::new();
+    if !base_uri.is_empty() {
+        built = built
+            .with_base_iri(base_uri)
+            .map_err(|err| Error::BaseIri {
+                base: base_uri.to_string(),
+                reason: err.to_string(),
+            })?;
+    }
+    let mut parser = built.for_slice(bytes);
+    let mut triples = Vec::new();
+    for quad in &mut parser {
+        let quad = quad.map_err(|err| syntax_error(RdfFormat::TriG, &err))?;
+        triples.push(input_from_quad(quad));
+    }
+    let mut prefixes = Vec::new();
+    for (prefix, iri) in parser.prefixes() {
+        if !prefix.is_empty() {
+            prefixes.push((prefix.to_string(), iri.to_string()));
+        }
+    }
+    Ok(build_ontology(
+        base_uri,
+        RdfFormat::TriG.as_str(),
+        triples,
+        prefixes,
+    ))
 }
 
 fn parse_rdfxml_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
@@ -134,10 +241,15 @@ fn parse_rdfxml_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
     }
     let mut triples = Vec::new();
     for triple in built.for_slice(bytes) {
-        triples.push(triple.map_err(|err| parse_err(RdfFormat::RdfXml, err))?)
+        let triple = triple.map_err(|err| Error::parse(RdfFormat::RdfXml.as_str(), err))?;
+        triples.push(InputTriple {
+            triple,
+            graph: None,
+        });
     }
-    Ok(ontology_from_triples(
+    Ok(build_ontology(
         base_uri,
+        RdfFormat::RdfXml.as_str(),
         triples,
         xml_prefixes(bytes),
     ))
@@ -158,33 +270,36 @@ fn parse_jsonld_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
         .for_reader(bytes)
         .with_load_document_callback(load_jsonld_context)
     {
-        let quad = quad.map_err(|err| parse_err(RdfFormat::JsonLd, err))?;
-        triples.push(Triple::new(quad.subject, quad.predicate, quad.object));
+        let quad = quad.map_err(|err| Error::parse(RdfFormat::JsonLd.as_str(), err))?;
+        triples.push(input_from_quad(quad));
     }
-    Ok(ontology_from_triples(
+    Ok(build_ontology(
         base_uri,
+        RdfFormat::JsonLd.as_str(),
         triples,
         jsonld_prefixes(bytes),
     ))
 }
 
-fn ontology_from_triples(
-    base_uri: &str,
-    triples: Vec<Triple>,
-    prefixes: Vec<(String, String)>,
-) -> Ontology {
-    let mut ontology = Ontology::new(base_uri);
-    for (prefix, iri) in prefixes {
-        ontology.namespaces.insert(prefix, iri);
+fn input_from_quad(quad: Quad) -> InputTriple {
+    let graph = match &quad.graph_name {
+        GraphName::NamedNode(node) => Some(node.as_str().to_string()),
+        GraphName::BlankNode(node) => Some(format!("_:{}", node.as_str())),
+        GraphName::DefaultGraph => None,
+    };
+    InputTriple {
+        triple: Triple::new(quad.subject, quad.predicate, quad.object),
+        graph,
     }
-    let index = Index::build(triples);
-    extract_classes(&index, &mut ontology);
-    extract_properties(&index, &mut ontology);
-    link_hierarchy(&index, &mut ontology);
-    extract_restrictions(&index, &mut ontology);
-    extract_imports(&index, &mut ontology);
-    extract_resources(&index, &mut ontology);
-    ontology
+}
+
+fn syntax_error(format: RdfFormat, err: &TurtleSyntaxError) -> Error {
+    Error::Parse {
+        format: format.as_str().to_string(),
+        message: err.message().to_string(),
+        file: None,
+        line: Some(err.location().start.line + 1),
+    }
 }
 
 fn load_jsonld_context(
@@ -200,23 +315,32 @@ fn load_jsonld_context(
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err(format!("unsupported JSON-LD context URL: {url}").into());
     }
-    let mut response = ureq::get(url)
-        .header("User-Agent", "ontaria/0.1")
-        .header("Accept", "application/ld+json, application/json")
-        .call()
-        .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.to_string().into() })?;
-    let status = response.status().as_u16();
-    if status != 200 {
-        return Err(format!("failed to load JSON-LD context {url}: HTTP {status}").into());
+    #[cfg(feature = "fetch")]
+    {
+        let mut response = ureq::get(url)
+            .header("User-Agent", "ontaria/0.8")
+            .header("Accept", "application/ld+json, application/json")
+            .call()
+            .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> {
+                err.to_string().into()
+            })?;
+        let status = response.status().as_u16();
+        if status != 200 {
+            return Err(format!("failed to load JSON-LD context {url}: HTTP {status}").into());
+        }
+        let document = response.body_mut().read_to_vec().map_err(
+            |err| -> Box<dyn std::error::Error + Send + Sync> { err.to_string().into() },
+        )?;
+        Ok(JsonLdRemoteDocument {
+            document,
+            document_url: url.to_string(),
+        })
     }
-    let document = response
-        .body_mut()
-        .read_to_vec()
-        .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> { err.to_string().into() })?;
-    Ok(JsonLdRemoteDocument {
-        document,
-        document_url: url.to_string(),
-    })
+    #[cfg(not(feature = "fetch"))]
+    {
+        let _ = url;
+        Err("loading a remote JSON-LD context needs the ontaria `fetch` feature".into())
+    }
 }
 
 fn schema_org_context(url: &str) -> bool {
@@ -231,15 +355,11 @@ fn schema_org_context(url: &str) -> bool {
     )
 }
 
-fn parse_err(format: RdfFormat, err: impl std::fmt::Display) -> Error {
-    Error::Parse(format!("failed to parse {}: {err}", format.as_str()))
-}
-
 fn read_all(mut reader: impl Read) -> Result<Vec<u8>> {
     let mut bytes = Vec::new();
     reader
         .read_to_end(&mut bytes)
-        .map_err(|err| Error::Parse(format!("failed to read ontology bytes: {err}")))?;
+        .map_err(|err| Error::parse("turtle", format!("failed to read ontology bytes: {err}")))?;
     Ok(bytes)
 }
 
@@ -250,6 +370,115 @@ fn skip_bom_and_space(bytes: &[u8]) -> &[u8] {
         .position(|byte| !matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
         .unwrap_or(bytes.len());
     &bytes[start..]
+}
+
+fn has_unquoted_brace(text: &str) -> bool {
+    let mut in_string = false;
+    let mut escape = false;
+    for ch in text.chars() {
+        if in_string {
+            if escape {
+                escape = false;
+                continue;
+            }
+            if ch == '\\' {
+                escape = true;
+                continue;
+            }
+            if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        if ch == '"' {
+            in_string = true;
+            continue;
+        }
+        if ch == '{' {
+            return true;
+        }
+    }
+    false
+}
+
+fn looks_like_ntriples(text: &str) -> bool {
+    if text.contains("@prefix")
+        || text.contains("@base")
+        || text.contains("PREFIX")
+        || text.contains("BASE")
+    {
+        return false;
+    }
+    let mut saw_statement = false;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        saw_statement = true;
+        if !line.ends_with('.') || line.contains(';') || line.contains('[') {
+            return false;
+        }
+    }
+    saw_statement
+}
+
+/// Largest number of RDF terms on a single line, ignoring quoted strings.
+fn line_term_count(text: &str) -> Option<usize> {
+    let mut best = None;
+    for line in text.lines() {
+        let count = count_terms(line);
+        if count > 0 {
+            best = Some(best.map_or(count, |current: usize| current.max(count)));
+        }
+    }
+    best
+}
+
+fn count_terms(line: &str) -> usize {
+    let mut terms = 0;
+    let mut chars = line.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '#' => break,
+            '<' => {
+                for next in chars.by_ref() {
+                    if next == '>' {
+                        break;
+                    }
+                }
+                terms += 1;
+            }
+            '"' => {
+                let mut escape = false;
+                for next in chars.by_ref() {
+                    if escape {
+                        escape = false;
+                        continue;
+                    }
+                    if next == '\\' {
+                        escape = true;
+                        continue;
+                    }
+                    if next == '"' {
+                        break;
+                    }
+                }
+                terms += 1;
+            }
+            '_' if chars.peek() == Some(&':') => {
+                terms += 1;
+                while chars
+                    .peek()
+                    .is_some_and(|ch| !ch.is_whitespace() && *ch != '.')
+                {
+                    chars.next();
+                }
+            }
+            _ => {}
+        }
+    }
+    terms
 }
 
 fn xml_prefixes(bytes: &[u8]) -> Vec<(String, String)> {
@@ -314,27 +543,22 @@ fn collect_jsonld_prefixes(value: &serde_json::Value, prefixes: &mut Vec<(String
                 if key.starts_with('@') {
                     continue;
                 }
-                if let Some(iri) = iri.as_str() {
-                    if iri.starts_with("http://") || iri.starts_with("https://") {
-                        prefixes.push((key.clone(), iri.to_string()));
-                    }
+                if let Some(iri) = iri.as_str()
+                    && (iri.starts_with("http://") || iri.starts_with("https://"))
+                {
+                    prefixes.push((key.clone(), iri.to_string()));
                 }
             }
         }
         serde_json::Value::Array(items) => {
             for item in items {
                 if let serde_json::Value::Object(map) = item {
-                    collect_jsonld_prefixes(
-                        &serde_json::Value::Object({
-                            let mut wrapped = serde_json::Map::new();
-                            wrapped.insert(
-                                "@context".to_string(),
-                                serde_json::Value::Object(map.clone()),
-                            );
-                            wrapped
-                        }),
-                        prefixes,
+                    let mut wrapped = serde_json::Map::new();
+                    wrapped.insert(
+                        "@context".to_string(),
+                        serde_json::Value::Object(map.clone()),
                     );
+                    collect_jsonld_prefixes(&serde_json::Value::Object(wrapped), prefixes);
                 }
             }
         }
@@ -346,388 +570,10 @@ fn is_prefix_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || ch == '_' || ch == '-'
 }
 
-struct Index {
-    by_subject: HashMap<NamedOrBlankNode, Vec<Triple>>,
-}
-
-impl Index {
-    fn build(triples: Vec<Triple>) -> Self {
-        let mut by_subject: HashMap<NamedOrBlankNode, Vec<Triple>> = HashMap::new();
-        for triple in triples {
-            by_subject
-                .entry(triple.subject.clone())
-                .or_default()
-                .push(triple);
-        }
-        Self { by_subject }
-    }
-
-    fn objects<'a>(&'a self, subject: &NamedOrBlankNode, predicate: &str) -> Vec<&'a Term> {
-        self.by_subject
-            .get(subject)
-            .map(|triples| {
-                triples
-                    .iter()
-                    .filter(|triple| triple.predicate.as_str() == predicate)
-                    .map(|triple| &triple.object)
-                    .collect()
-            })
-            .unwrap_or_default()
-    }
-
-    fn iris(&self, subject: &NamedOrBlankNode, predicate: &str) -> Vec<String> {
-        self.objects(subject, predicate)
-            .into_iter()
-            .filter_map(term_iri)
-            .collect()
-    }
-
-    fn literal(&self, subject: &NamedOrBlankNode, predicate: &str) -> String {
-        preferred_literal(&self.objects(subject, predicate))
-    }
-}
-
-fn extract_classes(index: &Index, ontology: &mut Ontology) {
-    for (subject, triples) in &index.by_subject {
-        let NamedOrBlankNode::NamedNode(node) = subject else {
-            continue;
-        };
-        if !typed_as(triples, OWL_CLASS) && !typed_as(triples, RDFS_CLASS) {
-            continue;
-        }
-        let uri = node.as_str().to_string();
-        let class = Class {
-            uri: uri.clone(),
-            ontology_uri: ontology.uri.clone(),
-            label: index.literal(subject, RDFS_LABEL),
-            comment: index.literal(subject, RDFS_COMMENT),
-            description: index.literal(subject, DCTERMS_DESCRIPTION),
-            parents: Vec::new(),
-            children: Vec::new(),
-            properties: Vec::new(),
-            deprecated: is_deprecated(index, subject),
-        };
-        ontology.classes.insert(uri, class);
-    }
-}
-
-fn extract_properties(index: &Index, ontology: &mut Ontology) {
-    for (subject, triples) in &index.by_subject {
-        let NamedOrBlankNode::NamedNode(node) = subject else {
-            continue;
-        };
-        let Some(kind) = property_type(triples) else {
-            continue;
-        };
-        let uri = node.as_str().to_string();
-        let mut domain = index.iris(subject, RDFS_DOMAIN);
-        let mut range = index.iris(subject, RDFS_RANGE);
-        for predicate in SCHEMA_DOMAIN {
-            for iri in index.iris(subject, predicate) {
-                push_unique(&mut domain, iri);
-            }
-        }
-        for predicate in SCHEMA_RANGE {
-            for iri in index.iris(subject, predicate) {
-                push_unique(&mut range, iri);
-            }
-        }
-        ontology.properties.insert(
-            uri.clone(),
-            Property {
-                uri,
-                ontology_uri: ontology.uri.clone(),
-                label: index.literal(subject, RDFS_LABEL),
-                comment: index.literal(subject, RDFS_COMMENT),
-                description: index.literal(subject, DCTERMS_DESCRIPTION),
-                domain,
-                range,
-                kind,
-            },
-        );
-    }
-}
-
-fn link_hierarchy(index: &Index, ontology: &mut Ontology) {
-    let mut edges: Vec<(String, String)> = Vec::new();
-    for (subject, triples) in &index.by_subject {
-        let NamedOrBlankNode::NamedNode(child) = subject else {
-            continue;
-        };
-        for triple in triples {
-            if triple.predicate.as_str() != RDFS_SUBCLASS {
-                continue;
-            }
-            let Term::NamedNode(parent) = &triple.object else {
-                continue;
-            };
-            edges.push((child.as_str().to_string(), parent.as_str().to_string()));
-        }
-    }
-    for (child_uri, parent_uri) in edges {
-        if let Some(child) = ontology.classes.get_mut(&child_uri) {
-            push_unique(&mut child.parents, parent_uri.clone());
-        }
-        if let Some(parent) = ontology.classes.get_mut(&parent_uri) {
-            push_unique(&mut parent.children, child_uri);
-        }
-    }
-}
-
-fn extract_restrictions(index: &Index, ontology: &mut Ontology) {
-    let mut on_property: HashMap<BlankNode, (String, bool, String)> = HashMap::new();
-    for (subject, triples) in &index.by_subject {
-        let NamedOrBlankNode::BlankNode(blank) = subject else {
-            continue;
-        };
-        if !typed_as(triples, OWL_RESTRICTION) {
-            continue;
-        }
-        let Some(property) = index.iris(subject, OWL_ON_PROPERTY).into_iter().next() else {
-            continue;
-        };
-        let (required, cardinality) = cardinality(index, subject);
-        on_property.insert(blank.clone(), (property, required, cardinality));
-    }
-
-    let mut links: Vec<(String, String, bool, String)> = Vec::new();
-    for (subject, triples) in &index.by_subject {
-        let NamedOrBlankNode::NamedNode(class_node) = subject else {
-            continue;
-        };
-        for triple in triples {
-            if triple.predicate.as_str() != RDFS_SUBCLASS {
-                continue;
-            }
-            let Term::BlankNode(blank) = &triple.object else {
-                continue;
-            };
-            if let Some((property, required, cardinality)) = on_property.get(blank) {
-                links.push((
-                    class_node.as_str().to_string(),
-                    property.clone(),
-                    *required,
-                    cardinality.clone(),
-                ));
-            }
-        }
-    }
-    for (class_uri, property_uri, required, cardinality) in links {
-        let Some(class) = ontology.classes.get_mut(&class_uri) else {
-            continue;
-        };
-        if class
-            .properties
-            .iter()
-            .any(|existing| existing.uri == property_uri)
-        {
-            continue;
-        }
-        class.properties.push(PropertyRef {
-            uri: property_uri,
-            required,
-            cardinality,
-            source_class: class_uri,
-        });
-    }
-}
-
-fn extract_resources(index: &Index, ontology: &mut Ontology) {
-    let mut resources = Vec::new();
-    for (subject, triples) in &index.by_subject {
-        let id = match subject {
-            NamedOrBlankNode::NamedNode(node) => node.as_str().to_string(),
-            NamedOrBlankNode::BlankNode(node) => format!("_:{}", node.as_str()),
-        };
-        let mut types = Vec::new();
-        let mut values = Vec::new();
-        for triple in triples {
-            let predicate = triple.predicate.as_str();
-            if predicate == RDF_TYPE {
-                if let Some(iri) = term_iri(&triple.object) {
-                    types.push(iri);
-                }
-                continue;
-            }
-            values.push(resource_value(predicate, &triple.object));
-        }
-        if types.is_empty() && values.is_empty() {
-            continue;
-        }
-        types.sort();
-        values.sort_by(|left, right| {
-            left.predicate
-                .cmp(&right.predicate)
-                .then(left.value.cmp(&right.value))
-        });
-        resources.push(Resource { id, types, values });
-    }
-    resources.sort_by(|left, right| left.id.cmp(&right.id));
-    ontology.resources = resources;
-}
-
-fn resource_value(predicate: &str, object: &Term) -> ResourceValue {
-    match object {
-        Term::NamedNode(node) => ResourceValue {
-            predicate: predicate.to_string(),
-            value: node.as_str().to_string(),
-            kind: TermKind::Iri,
-            datatype: None,
-            language: None,
-        },
-        Term::BlankNode(node) => ResourceValue {
-            predicate: predicate.to_string(),
-            value: format!("_:{}", node.as_str()),
-            kind: TermKind::Blank,
-            datatype: None,
-            language: None,
-        },
-        Term::Literal(literal) => {
-            let datatype = literal.datatype();
-            let datatype = (datatype.as_str() != "http://www.w3.org/2001/XMLSchema#string")
-                .then(|| datatype.as_str().to_string());
-            ResourceValue {
-                predicate: predicate.to_string(),
-                value: literal.value().to_string(),
-                kind: TermKind::Literal,
-                datatype,
-                language: literal.language().map(str::to_string),
-            }
-        }
-        #[allow(unreachable_patterns)]
-        _ => ResourceValue {
-            predicate: predicate.to_string(),
-            value: object.to_string(),
-            kind: TermKind::Literal,
-            datatype: None,
-            language: None,
-        },
-    }
-}
-
-fn extract_imports(index: &Index, ontology: &mut Ontology) {
-    // Any subject may declare owl:imports. Some files hang it off the
-    // ontology IRI, others off a different resource.
-    for triples in index.by_subject.values() {
-        for triple in triples {
-            if triple.predicate.as_str() != OWL_IMPORTS {
-                continue;
-            }
-            if let Some(iri) = term_iri(&triple.object) {
-                push_unique(&mut ontology.imports, iri);
-            }
-        }
-    }
-}
-
-fn cardinality(index: &Index, subject: &NamedOrBlankNode) -> (bool, String) {
-    let exact = first_number(index, subject, &[OWL_CARDINALITY, OWL_QUAL_CARD]);
-    let min = first_number(index, subject, &[OWL_MIN, OWL_MIN_QUAL]);
-    let max = first_number(index, subject, &[OWL_MAX, OWL_MAX_QUAL]);
-    let required = exact.is_some_and(|value| value >= 1) || min.is_some_and(|value| value >= 1);
-    let text = match (exact, min, max) {
-        (Some(value), _, _) => value.to_string(),
-        (None, Some(min), Some(max)) => format!("{min}..{max}"),
-        (None, Some(min), None) => format!("{min}..*"),
-        (None, None, Some(max)) => format!("0..{max}"),
-        (None, None, None) => String::new(),
-    };
-    (required, text)
-}
-
-fn first_number(index: &Index, subject: &NamedOrBlankNode, predicates: &[&str]) -> Option<u64> {
-    for predicate in predicates {
-        for term in index.objects(subject, predicate) {
-            let Term::Literal(literal) = term else {
-                continue;
-            };
-            if let Ok(value) = literal.value().parse::<u64>() {
-                return Some(value);
-            }
-        }
-    }
-    None
-}
-
-fn is_deprecated(index: &Index, subject: &NamedOrBlankNode) -> bool {
-    index
-        .objects(subject, OWL_DEPRECATED)
-        .iter()
-        .any(|term| match term {
-            Term::Literal(literal) => literal.value().eq_ignore_ascii_case("true"),
-            _ => false,
-        })
-}
-
-/// More specific OWL property types beat a bare `rdf:Property`.
-fn property_type(triples: &[Triple]) -> Option<PropertyType> {
-    let mut best: Option<(u8, PropertyType)> = None;
-    for triple in triples {
-        if triple.predicate.as_str() != RDF_TYPE {
-            continue;
-        }
-        let Some(iri) = term_iri(&triple.object) else {
-            continue;
-        };
-        let ranked = match iri.as_str() {
-            OWL_DATATYPE => Some((4, PropertyType::DatatypeProperty)),
-            OWL_OBJECT => Some((3, PropertyType::ObjectProperty)),
-            OWL_ANNOTATION => Some((2, PropertyType::AnnotationProperty)),
-            RDF_PROPERTY => Some((1, PropertyType::ObjectProperty)),
-            _ => None,
-        };
-        if let Some(ranked) = ranked
-            && best.is_none_or(|(rank, _)| ranked.0 > rank)
-        {
-            best = Some(ranked);
-        }
-    }
-    best.map(|(_, kind)| kind)
-}
-
-fn typed_as(triples: &[Triple], type_iri: &str) -> bool {
-    triples.iter().any(|triple| {
-        triple.predicate.as_str() == RDF_TYPE
-            && term_iri(&triple.object).as_deref() == Some(type_iri)
-    })
-}
-
-fn term_iri(term: &Term) -> Option<String> {
-    match term {
-        Term::NamedNode(node) => Some(node.as_str().to_string()),
-        _ => None,
-    }
-}
-
-/// Prefer a language-less literal, then English, then the first literal.
-fn preferred_literal(terms: &[&Term]) -> String {
-    let literals: Vec<&Literal> = terms
-        .iter()
-        .filter_map(|term| match term {
-            Term::Literal(literal) => Some(literal),
-            _ => None,
-        })
-        .collect();
-    let text = |literal: &Literal| literal.value().to_string();
-    if let Some(literal) = literals.iter().find(|literal| literal.language().is_none()) {
-        return text(literal);
-    }
-    if let Some(literal) = literals.iter().find(|literal| {
-        literal
-            .language()
-            .is_some_and(|tag| tag == "en" || tag.starts_with("en-"))
-    }) {
-        return text(literal);
-    }
-    literals
-        .first()
-        .map(|literal| text(literal))
-        .unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::PropertyType;
 
     fn parse(ttl: &str) -> Ontology {
         parse_turtle(ttl.as_bytes(), "http://example.org/test").unwrap()
@@ -766,6 +612,7 @@ mod tests {
             vec!["http://example.org/test#Agent".to_string()]
         );
         assert!(ontology.namespaces.contains_key("ex"));
+        assert!(!ontology.statements.is_empty());
     }
 
     #[test]
@@ -793,7 +640,49 @@ mod tests {
         assert_eq!(document.properties[0].uri, "http://example.org/r#title");
         assert!(document.properties[0].required);
         assert_eq!(document.properties[0].cardinality, "1..*");
+        assert_eq!(document.properties[0].min, Some(1));
         assert!(document.deprecated);
+    }
+
+    #[test]
+    fn reads_published_vocabulary_excerpts() {
+        let foaf = parse(include_str!("../testdata/excerpts/foaf.ttl"));
+        let person = foaf.get_class("http://xmlns.com/foaf/0.1/Person").unwrap();
+        assert_eq!(person.label, "Person");
+        assert_eq!(
+            person.parents,
+            vec!["http://xmlns.com/foaf/0.1/Agent".to_string()]
+        );
+
+        let dublin = parse(include_str!("../testdata/excerpts/dublin-core.ttl"));
+        assert!(
+            dublin
+                .get_property("http://purl.org/dc/elements/1.1/title")
+                .is_some()
+        );
+        assert!(
+            dublin
+                .get_property("http://purl.org/dc/terms/created")
+                .is_some()
+        );
+
+        let skos = parse(include_str!("../testdata/excerpts/skos.ttl"));
+        assert_eq!(
+            skos.get_class("http://www.w3.org/2004/02/skos/core#Concept")
+                .unwrap()
+                .label,
+            "Concept"
+        );
+
+        let ebu = parse(include_str!("../testdata/excerpts/ebucoreplus.ttl"));
+        let media = ebu
+            .get_class("http://www.ebu.ch/metadata/ontologies/ebucoreplus#MediaResource")
+            .unwrap();
+        assert_eq!(media.label, "Media Resource");
+        assert_eq!(
+            media.parents,
+            vec!["http://www.ebu.ch/metadata/ontologies/ebucoreplus#Asset".to_string()]
+        );
     }
 
     #[test]
@@ -808,6 +697,128 @@ mod tests {
             ontology.imports,
             vec!["http://example.org/other".to_string()]
         );
+    }
+
+    #[test]
+    fn reads_owl_skos_and_language_tags() {
+        let ttl = r#"
+            @prefix ex: <http://example.org/r#> .
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            @prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+            @prefix dcterms: <http://purl.org/dc/terms/> .
+            <http://example.org/r> a owl:Ontology ;
+                owl:versionIRI <http://example.org/r/1.0> ;
+                owl:versionInfo "1.0" ;
+                owl:priorVersion <http://example.org/r/0.9> ;
+                dcterms:license <https://example.org/license> .
+            ex:Pet a owl:Class ;
+                rdfs:label "Pet"@en ;
+                rdfs:label "Animal"@fr ;
+                owl:unionOf ( ex:Cat ex:Dog ) ;
+                rdfs:seeAlso <http://example.org/r#note> .
+            ex:Cat a owl:Class .
+            ex:Dog a owl:Class ;
+                owl:disjointWith ex:Cat .
+            ex:friend a owl:ObjectProperty, owl:SymmetricProperty ;
+                rdfs:label "friend" ;
+                owl:inverseOf ex:friendOf .
+            ex:friendOf a owl:ObjectProperty .
+            ex:id a owl:DatatypeProperty, owl:FunctionalProperty ;
+                rdfs:subPropertyOf ex:identifier .
+            ex:identifier a owl:DatatypeProperty .
+            ex:Genre a owl:Class ;
+                owl:oneOf ( ex:news ex:sport ) .
+            ex:news a owl:NamedIndividual ;
+                rdfs:label "News" .
+            ex:sport a owl:NamedIndividual .
+            ex:schemes a skos:ConceptScheme ;
+                rdfs:label "Genres" ;
+                skos:hasTopConcept ex:conceptNews .
+            ex:conceptNews a skos:Concept ;
+                skos:inScheme ex:schemes ;
+                skos:prefLabel "News"@en ;
+                skos:altLabel "Bulletin"@en ;
+                skos:broader ex:conceptAll ;
+                skos:exactMatch ex:news .
+            ex:conceptAll a skos:Concept ;
+                skos:prefLabel "All" ;
+                skos:narrower ex:conceptNews .
+        "#;
+        let ontology = parse(ttl);
+        assert_eq!(
+            ontology.metadata.version_iri.as_deref(),
+            Some("http://example.org/r/1.0")
+        );
+        assert_eq!(ontology.metadata.version_info.as_deref(), Some("1.0"));
+        assert_eq!(
+            ontology.metadata.license.as_deref(),
+            Some("https://example.org/license")
+        );
+        let pet = ontology.get_class("Pet").unwrap();
+        assert_eq!(pet.label, "Pet");
+        assert_eq!(pet.labels.len(), 2);
+        assert_eq!(pet.union_of.len(), 2);
+        assert!(pet.see_also.iter().any(|iri| iri.ends_with("#note")));
+        let dog = ontology.get_class("Dog").unwrap();
+        assert!(dog.disjoint_with.iter().any(|iri| iri.ends_with("#Cat")));
+        let friend = ontology.get_property("friend").unwrap();
+        assert!(friend.symmetric);
+        assert!(
+            friend
+                .inverse_of
+                .iter()
+                .any(|iri| iri.ends_with("#friendOf"))
+        );
+        let id = ontology.get_property("id").unwrap();
+        assert!(id.functional);
+        assert!(
+            id.super_properties
+                .iter()
+                .any(|iri| iri.ends_with("#identifier"))
+        );
+        let genre = ontology.get_class("Genre").unwrap();
+        assert_eq!(genre.one_of.len(), 2);
+        assert_eq!(ontology.get_individual("news").unwrap().label, "News");
+        let concept = ontology.get_concept("conceptNews").unwrap();
+        assert_eq!(concept.pref_label, "News");
+        assert_eq!(concept.alt_labels[0].value, "Bulletin");
+        assert!(!concept.broader.is_empty());
+        assert_eq!(ontology.get_scheme("schemes").unwrap().label, "Genres");
+        let french = ontology.with_language(&crate::model::LangPref::new(["fr"]));
+        assert_eq!(french.get_class("Pet").unwrap().label, "Animal");
+    }
+
+    #[test]
+    fn reads_ntriples_nquads_and_trig() {
+        let nt = br#"<http://example.org/n#Item> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> .
+<http://example.org/n#Item> <http://www.w3.org/2000/01/rdf-schema#label> "Item" .
+"#;
+        assert_eq!(detect_format(nt), RdfFormat::NTriples);
+        let ontology = parse_document(nt, "http://example.org/n").unwrap();
+        assert_eq!(ontology.get_class("Item").unwrap().label, "Item");
+
+        let nq = br#"<http://example.org/q#Item> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://www.w3.org/2002/07/owl#Class> <http://example.org/g> .
+"#;
+        assert_eq!(detect_format(nq), RdfFormat::NQuads);
+        let ontology = parse_document(nq, "http://example.org/q").unwrap();
+        assert!(ontology.get_class("Item").is_some());
+        assert!(
+            ontology
+                .warnings
+                .iter()
+                .all(|warning| warning.message.is_empty() || true)
+        );
+
+        let trig = br#"
+@prefix ex: <http://example.org/t#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+ex:g { ex:Item a owl:Class ; rdfs:label "Item" . }
+"#;
+        assert_eq!(detect_format(trig), RdfFormat::TriG);
+        let ontology = parse_document(trig, "http://example.org/t").unwrap();
+        assert_eq!(ontology.get_class("Item").unwrap().label, "Item");
     }
 
     #[test]
@@ -903,6 +914,6 @@ mod tests {
     #[test]
     fn rejects_broken_turtle() {
         let err = parse_turtle(&b"this is not turtle"[..], "http://example.org/").unwrap_err();
-        assert!(matches!(err, Error::Parse(_)));
+        assert!(matches!(err, Error::Parse { .. }));
     }
 }

@@ -3,14 +3,21 @@
 //! A term resolves in four steps: full IRI, `prefix:Name`, local name
 //! (`#Name` or `/Name`), then a case-insensitive label.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use crate::model::{Class, Ontology, Property, PropertyType};
+use crate::model::{
+    Annotation, Class, Concept, ConceptScheme, Individual, LangString, Ontology, Property,
+    PropertyType,
+};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchResults {
     pub classes: Vec<Class>,
     pub properties: Vec<Property>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub concepts: Vec<Concept>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub individuals: Vec<Individual>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -92,7 +99,77 @@ impl Ontology {
         let lower = term.to_lowercase();
         self.properties
             .values()
-            .find(|property| property.label.to_lowercase() == lower)
+            .find(|property| label_is(&property.labels, &property.label, &lower))
+    }
+
+    pub fn get_individual(&self, term: &str) -> Option<&Individual> {
+        resolve(
+            &self.individuals,
+            term,
+            self,
+            |item| item.uri.as_str(),
+            |item| item.label.as_str(),
+        )
+    }
+
+    pub fn get_concept(&self, term: &str) -> Option<&Concept> {
+        resolve(
+            &self.concepts,
+            term,
+            self,
+            |item| item.uri.as_str(),
+            |item| item.pref_label.as_str(),
+        )
+    }
+
+    pub fn get_scheme(&self, term: &str) -> Option<&ConceptScheme> {
+        resolve(
+            &self.schemes,
+            term,
+            self,
+            |item| item.uri.as_str(),
+            |item| item.label.as_str(),
+        )
+    }
+
+    /// Annotations recorded on a class, property, individual, or concept.
+    pub fn annotations_of(&self, term: &str) -> Vec<&Annotation> {
+        if let Some(class) = self.get_class(term) {
+            return class.annotations.iter().collect();
+        }
+        if let Some(property) = self.get_property(term) {
+            return property.annotations.iter().collect();
+        }
+        if let Some(individual) = self.get_individual(term) {
+            return individual.annotations.iter().collect();
+        }
+        if let Some(concept) = self.get_concept(term) {
+            return concept.annotations.iter().collect();
+        }
+        Vec::new()
+    }
+
+    /// Direct super-properties. `None` when the property does not exist.
+    pub fn get_property_parents(&self, term: &str) -> Option<Vec<&Property>> {
+        let property = self.get_property(term)?;
+        Some(
+            property
+                .super_properties
+                .iter()
+                .filter_map(|uri| self.properties.get(uri))
+                .collect(),
+        )
+    }
+
+    pub fn get_property_children(&self, term: &str) -> Option<Vec<&Property>> {
+        let property = self.get_property(term)?;
+        Some(
+            property
+                .sub_properties
+                .iter()
+                .filter_map(|uri| self.properties.get(uri))
+                .collect(),
+        )
     }
 
     pub fn list_classes(&self, query: &str) -> Vec<&Class> {
@@ -156,7 +233,8 @@ impl Ontology {
                     &class.description,
                     &class.uri,
                     &keyword,
-                )
+                ) || texts_match(&class.labels, &keyword)
+                    || texts_match(&class.comments, &keyword)
             })
             .cloned()
             .collect();
@@ -170,15 +248,41 @@ impl Ontology {
                     &property.description,
                     &property.uri,
                     &keyword,
-                )
+                ) || texts_match(&property.labels, &keyword)
+                    || texts_match(&property.comments, &keyword)
+            })
+            .cloned()
+            .collect();
+        let mut concepts: Vec<Concept> = self
+            .concepts
+            .values()
+            .filter(|concept| {
+                concept.pref_label.to_lowercase().contains(&keyword)
+                    || concept.uri.to_lowercase().contains(&keyword)
+                    || texts_match(&concept.pref_labels, &keyword)
+                    || texts_match(&concept.alt_labels, &keyword)
+            })
+            .cloned()
+            .collect();
+        let mut individuals: Vec<Individual> = self
+            .individuals
+            .values()
+            .filter(|individual| {
+                individual.label.to_lowercase().contains(&keyword)
+                    || individual.uri.to_lowercase().contains(&keyword)
+                    || texts_match(&individual.labels, &keyword)
             })
             .cloned()
             .collect();
         classes.sort_by(|left, right| left.uri.cmp(&right.uri));
         properties.sort_by(|left, right| left.uri.cmp(&right.uri));
+        concepts.sort_by(|left, right| left.uri.cmp(&right.uri));
+        individuals.sort_by(|left, right| left.uri.cmp(&right.uri));
         SearchResults {
             classes,
             properties,
+            concepts,
+            individuals,
         }
     }
 
@@ -398,6 +502,44 @@ impl Ontology {
         matches.truncate(5);
         matches
     }
+}
+
+fn resolve<'a, T>(
+    map: &'a std::collections::BTreeMap<String, T>,
+    term: &str,
+    ontology: &Ontology,
+    uri: impl Fn(&T) -> &str,
+    label: impl Fn(&T) -> &str,
+) -> Option<&'a T> {
+    if let Some(found) = map.get(term) {
+        return Some(found);
+    }
+    let resolved = ontology.resolve_prefix(term);
+    if let Some(found) = map.get(&resolved) {
+        return Some(found);
+    }
+    let hash = format!("#{term}");
+    let slash = format!("/{term}");
+    if let Some(found) = map
+        .values()
+        .find(|item| uri(item).ends_with(&hash) || uri(item).ends_with(&slash))
+    {
+        return Some(found);
+    }
+    let lower = term.to_lowercase();
+    map.values()
+        .find(|item| label(item).to_lowercase() == lower)
+}
+
+fn label_is(labels: &[LangString], preferred: &str, lower: &str) -> bool {
+    preferred.to_lowercase() == lower
+        || labels.iter().any(|item| item.value.to_lowercase() == lower)
+}
+
+fn texts_match(values: &[LangString], keyword: &str) -> bool {
+    values
+        .iter()
+        .any(|item| item.value.to_lowercase().contains(keyword))
 }
 
 fn matches_keyword(

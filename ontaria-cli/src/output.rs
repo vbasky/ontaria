@@ -1,21 +1,18 @@
 //! JSON envelope shared by every command.
 //!
-//! Success is `{status, data}` and includes `warnings` when there are some.
-//! Failure is `{status, message}`.
+//! Success is `{status, data, warnings}`. Failure is `{status, message}`.
+//! Warnings are objects, not bare strings.
 
-use ontaria::Result;
+use ontaria::{Error, Result, Warning, WarningCode};
+use serde::Serialize;
 use serde_json::{Value, json};
 
-pub fn print_success(data: impl serde::Serialize, warnings: &[String]) -> Result<()> {
-    let mut value = json!({
+pub fn print_success(data: impl Serialize, warnings: &[Warning]) -> Result<()> {
+    print_value(&json!({
         "status": "ok",
-        "data": serde_json::to_value(data).map_err(|err| ontaria::Error::Message(err.to_string()))?,
-    });
-    if !warnings.is_empty() {
-        value["warnings"] = serde_json::to_value(warnings)
-            .map_err(|err| ontaria::Error::Message(err.to_string()))?;
-    }
-    print_value(&value)
+        "data": data,
+        "warnings": warnings,
+    }))
 }
 
 pub fn print_error(message: impl AsRef<str>) -> Result<()> {
@@ -25,9 +22,17 @@ pub fn print_error(message: impl AsRef<str>) -> Result<()> {
     }))
 }
 
+pub fn warnings_from(ontology: &[Warning], extra: &[String]) -> Vec<Warning> {
+    let mut warnings = ontology.to_vec();
+    for message in extra {
+        warnings.push(Warning::new(WarningCode::Other, message.clone()));
+    }
+    warnings
+}
+
 fn print_value(value: &Value) -> Result<()> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|err| ontaria::Error::Message(err.to_string()))?;
-    println!("{text}");
+    serde_json::to_writer(std::io::stdout(), value)
+        .map_err(|err| Error::message(format!("failed to write JSON: {err}")))?;
+    println!();
     Ok(())
 }

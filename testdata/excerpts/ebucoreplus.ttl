@@ -1,0 +1,12 @@
+# Short original excerpt using the published EBUCorePlus IRIs.
+# This is not a copy of the EBUCorePlus ontology.
+@prefix ebu: <http://www.ebu.ch/metadata/ontologies/ebucoreplus#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+ebu:Asset a owl:Class ;
+    rdfs:label "Asset" .
+
+ebu:MediaResource a owl:Class ;
+    rdfs:label "Media Resource" ;
+    rdfs:subClassOf ebu:Asset .

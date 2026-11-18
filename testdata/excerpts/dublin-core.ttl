@@ -1,0 +1,12 @@
+# Short original excerpt using the published Dublin Core IRIs.
+# This is not a copy of the DCMI vocabularies.
+@prefix dc: <http://purl.org/dc/elements/1.1/> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+dc:title a owl:DatatypeProperty ;
+    rdfs:label "Title" .
+
+dcterms:created a owl:DatatypeProperty ;
+    rdfs:label "Date Created" .

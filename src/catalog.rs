@@ -31,7 +31,7 @@ impl Catalog {
             source,
         })?;
         let text = String::from_utf8(bytes)
-            .map_err(|err| Error::Message(format!("catalog is not UTF-8: {err}")))?;
+            .map_err(|err| Error::message(format!("catalog is not UTF-8: {err}")))?;
         let base = path
             .parent()
             .unwrap_or_else(|| Path::new("."))
@@ -47,7 +47,7 @@ impl Catalog {
             });
         }
         let parsed: TomlCatalog = toml::from_str(&text)
-            .map_err(|err| Error::Message(format!("failed to parse catalog: {err}")))?;
+            .map_err(|err| Error::message(format!("failed to parse catalog: {err}")))?;
         let mut imports = BTreeMap::new();
         for (iri, relative) in parsed.imports {
             imports.insert(iri, base.join(relative));

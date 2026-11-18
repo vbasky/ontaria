@@ -7,8 +7,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use ontaria::{
-    CacheManager, Class, LoadOptions, Ontology, Property, SearchResults, existing_file, file_url,
-    load_ontology,
+    CacheManager, Class, LangPref, LoadOptions, Ontology, Property, SearchResults, Warning,
+    existing_file, file_url,
 };
 
 mod output;
@@ -38,6 +38,10 @@ struct Cli {
     /// Offline catalog (TOML or OASIS XML) mapping import IRIs to local files.
     #[arg(long, global = true, value_name = "FILE")]
     catalog: Option<PathBuf>,
+
+    /// Preferred language tags, most preferred first, separated by commas.
+    #[arg(long, global = true, value_name = "TAGS")]
+    lang: Option<String>,
 
     /// Do not use the network. A missing cache entry is an error.
     #[arg(long, global = true)]
@@ -150,11 +154,25 @@ fn dispatch(cli: Cli) -> ontaria::Result<()> {
 }
 
 fn options_from(cli: &Cli) -> LoadOptions {
+    let tags = cli
+        .lang
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string);
     LoadOptions {
         follow_imports: cli.imports,
         cache_dir: cli.cache_dir.clone(),
         catalog_path: cli.catalog.clone(),
+        lang: if cli.lang.is_some() {
+            LangPref::new(tags)
+        } else {
+            LangPref::default()
+        },
         allow_network: false,
+        ..LoadOptions::default()
     }
 }
 
@@ -167,8 +185,8 @@ fn open_cache(options: &LoadOptions) -> ontaria::Result<CacheManager> {
 
 fn fetch(options: &LoadOptions, url: &str, offline: bool) -> ontaria::Result<()> {
     if offline {
-        return Err(ontaria::Error::Message(
-            "fetch needs the network; omit --offline".to_string(),
+        return Err(ontaria::Error::message(
+            "fetch needs the network; omit --offline",
         ));
     }
     let cache = open_cache(options)?;
@@ -181,12 +199,12 @@ fn fetch(options: &LoadOptions, url: &str, offline: bool) -> ontaria::Result<()>
     } else {
         cache.fetch(url)?
     };
-    print_success(&meta, &[])
+    print_success(&meta, &[] as &[Warning])
 }
 
 fn list_cached(options: &LoadOptions) -> ontaria::Result<()> {
     let cached = open_cache(options)?.list()?;
-    print_success(&cached, &[])
+    print_success(&cached, &[] as &[Warning])
 }
 
 fn get_class(
@@ -332,9 +350,40 @@ fn batch_search(
 fn ontology_for(
     spec: &Option<String>,
     options: &LoadOptions,
-) -> ontaria::Result<(Ontology, Vec<String>)> {
-    let loaded = load_ontology(spec.as_deref(), options)?;
-    Ok((loaded.ontology, loaded.warnings))
+) -> ontaria::Result<(Ontology, Vec<Warning>)> {
+    let spec = match spec.clone().filter(|value| !value.is_empty()) {
+        Some(spec) => spec,
+        None => {
+            let cache = open_cache(options)?;
+            match cache.list()?.as_slice() {
+                [] => {
+                    return Err(ontaria::Error::message(
+                        "no cached ontologies found, use --ontology or fetch one first",
+                    ));
+                }
+                [only] => {
+                    let mut ontology = Ontology::load(&only.url, options)?;
+                    ontology.warnings.insert(
+                        0,
+                        Warning::new(
+                            ontaria::WarningCode::Other,
+                            format!("Using cached ontology: {}", only.url),
+                        ),
+                    );
+                    let warnings = ontology.warnings.clone();
+                    return Ok((ontology, warnings));
+                }
+                _ => {
+                    return Err(ontaria::Error::message(
+                        "multiple ontologies cached, specify --ontology",
+                    ));
+                }
+            }
+        }
+    };
+    let ontology = Ontology::load(&spec, options)?;
+    let warnings = ontology.warnings.clone();
+    Ok((ontology, warnings))
 }
 
 fn filter_search(mut results: SearchResults, kind: Option<Kind>) -> SearchResults {
@@ -359,5 +408,8 @@ fn require_property<'a>(ontology: &'a Ontology, term: &str) -> ontaria::Result<&
 }
 
 fn missing_err(kind: &str, name: &str) -> ontaria::Error {
-    ontaria::Error::Message(format!("{kind} not found: {name}"))
+    ontaria::Error::NotFound {
+        kind: kind.to_string(),
+        term: name.to_string(),
+    }
 }
