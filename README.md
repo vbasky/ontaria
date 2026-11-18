@@ -13,6 +13,8 @@ cargo install --path ontaria-cli
 # binary: ontaria
 ```
 
+Pushing a `v*` tag builds those binaries for macOS, Linux, and Windows, attaches them to a GitHub release, and publishes `ontaria-macros` and `ontaria` to crates.io.
+
 The library:
 
 ```toml
