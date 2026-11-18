@@ -43,9 +43,14 @@ ontaria -o ./vocab.ttl gen shacl --out ./shapes.ttl
 ontaria -o ./vocab.ttl gen pg --out ./model.pg
 ontaria -o ./vocab.ttl gen docs --out ./VOCAB.md
 ontaria -o ./vocab.ttl reason
+ontaria map validate ./mapping.yml
+ontaria map apply ./mapping.yml ./record.json
+ontaria map reverse ./mapping.yml ./record.jsonld
+ontaria fetch https://example.org/vocab.ttl --refresh
+ontaria cache verify
 ```
 
-`validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `validate --shacl` needs the CLI `shacl` feature. `reason --owl-rl` needs the CLI `reasoning` feature. Without that feature, `apply_owl_rl` returns `Error::Feature`.
+`validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `map validate` exits 1 when a target term is not in the ontology. `validate --shacl` needs the CLI `shacl` feature. `reason --owl-rl` needs the CLI `reasoning` feature. Without that feature, `apply_owl_rl` returns `Error::Feature`. Version 0.8 is pre-1.0. The public API is not frozen. See `STABILITY.md`.
 
 ## MCP and HTTP
 

@@ -319,6 +319,53 @@ pub fn parse_age(text: &str) -> Result<Duration> {
     Ok(Duration::from_secs(seconds))
 }
 
+#[cfg(feature = "async-fetch")]
+pub async fn fetch_bytes(url: &str, limits: &FetchLimits) -> Result<Vec<u8>> {
+    if !is_remote(url) {
+        return Err(Error::Fetch {
+            url: url.to_string(),
+            message: "only http and https URLs can be fetched".to_string(),
+        });
+    }
+    let client = reqwest::Client::builder()
+        .timeout(limits.timeout)
+        .redirect(reqwest::redirect::Policy::limited(
+            limits.max_redirects as usize,
+        ))
+        .build()
+        .map_err(|err| Error::Fetch {
+            url: url.to_string(),
+            message: err.to_string(),
+        })?;
+    let response = client
+        .get(url)
+        .header("User-Agent", "ontaria/0.8")
+        .send()
+        .await
+        .map_err(|err| Error::Fetch {
+            url: url.to_string(),
+            message: err.to_string(),
+        })?;
+    let status = response.status().as_u16();
+    if status != 200 {
+        return Err(Error::HttpStatus {
+            url: url.to_string(),
+            status,
+        });
+    }
+    let bytes = response.bytes().await.map_err(|err| Error::Fetch {
+        url: url.to_string(),
+        message: err.to_string(),
+    })?;
+    if bytes.len() > limits.max_bytes {
+        return Err(Error::Limit {
+            url: url.to_string(),
+            message: format!("response is larger than {} bytes", limits.max_bytes),
+        });
+    }
+    Ok(bytes.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

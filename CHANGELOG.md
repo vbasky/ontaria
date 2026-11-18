@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- A YAML mapping names a subject, a type, and source paths. `map validate` checks those terms. `map apply` writes JSON-LD, including an optional PROV-O derivation. `map reverse` reads that JSON-LD back into the source shape.
+- `fetch --refresh` revalidates with ETag and Last-Modified. `cache list`, `cache prune --older-than`, and `cache verify` maintain the cache.
+- `async-fetch` downloads with `reqwest`. The caller supplies the runtime.
+- `STABILITY.md` says the public API is not frozen. 1.0 is still the freeze and is not tagged.
+- `SECURITY.md` records fetch limits. The client sends `User-Agent: ontaria/0.8`.
+- CI runs fmt, clippy, tests, and `cargo deny`. `benches/load.rs` times a parse. `fuzz/` is a separate workspace for the parser.
+
 ## 0.7.0
 
 - `reason` materializes RDFS subclass, subproperty, domain, and range consequences. Inferred triples are marked `inferred: true`. Asserted triples stay as they were written.

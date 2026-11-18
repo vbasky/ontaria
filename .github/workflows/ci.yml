@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88
+        with:
+          components: rustfmt, clippy
+      - name: Python headers for ontaria-python
+        run: sudo apt-get update && sudo apt-get install -y python3-dev pkg-config
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+      - name: Format
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+      - name: No default features
+        run: cargo check -p ontaria --no-default-features
+      - name: Optional library features
+        run: cargo test -p ontaria --features shacl,reasoning,codegen
+      - name: CLI mcp, shacl, and reasoning
+        run: cargo clippy -p ontaria-cli --features mcp,shacl,reasoning --all-targets -- -D warnings

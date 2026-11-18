@@ -1,0 +1,23 @@
+[package]
+name = "ontaria-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+rust-version = "1.88"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ontaria = { path = "..", default-features = false }
+
+[[bin]]
+name = "parse_document"
+path = "fuzz_targets/parse_document.rs"
+test = false
+doc = false
+bench = false
+
+# Separate workspace so the root `cargo test --workspace` does not build the fuzzer.
+[workspace]

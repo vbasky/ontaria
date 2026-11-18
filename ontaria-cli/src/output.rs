@@ -3,7 +3,7 @@
 //! Success is `{status, data, warnings}`. Failure is `{status, message}`.
 //! Warnings are objects, not bare strings.
 
-use ontaria::{Error, Result, Warning, WarningCode};
+use ontaria::{Error, Result, Warning};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -20,14 +20,6 @@ pub fn print_error(message: impl AsRef<str>) -> Result<()> {
         "status": "error",
         "message": message.as_ref(),
     }))
-}
-
-pub fn warnings_from(ontology: &[Warning], extra: &[String]) -> Vec<Warning> {
-    let mut warnings = ontology.to_vec();
-    for message in extra {
-        warnings.push(Warning::new(WarningCode::Other, message.clone()));
-    }
-    warnings
 }
 
 fn print_value(value: &Value) -> Result<()> {

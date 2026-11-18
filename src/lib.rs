@@ -7,6 +7,7 @@
 //! # Features
 //!
 //! * `fetch` — download ontologies with `ureq` (on by default).
+//! * `async-fetch` — the same download with `reqwest`. The caller supplies the runtime.
 //! * `shacl` — SHACL validation through `shacl-rust`.
 //! * `reasoning` — OWL 2 RL through `reasonable`.
 //! * `codegen` — re-export the [`terms!`](crate::terms) proc macro.
@@ -23,7 +24,8 @@
 //! assert_eq!(ontology.get_class("Person").unwrap().label, "Person");
 //! ```
 //!
-//! The minimum supported Rust version is 1.88.
+//! The minimum supported Rust version is 1.88. See `STABILITY.md` for the
+//! public-API policy.
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
@@ -37,6 +39,7 @@ mod lint;
 mod load;
 mod lockfile;
 mod manager;
+mod mapping;
 mod model;
 mod parser;
 mod query;
@@ -56,6 +59,7 @@ pub use error::{Error, Result, Warning, WarningCode};
 pub use lint::{LintOptions, lint};
 pub use load::{LoadOptions, Loaded, existing_file, file_url, is_remote, load_ontology, parse_age};
 pub use lockfile::{LockEntry, LockFile};
+pub use mapping::{FieldMapping, Mapping, apply, load_mapping, reverse, validate_mapping};
 pub use model::{
     Annotation, Class, ClassExpression, Concept, ConceptScheme, Fact, Individual, LangPref,
     LangString, Ontology, OntologyMetadata, Property, PropertyRef, PropertyType, Resource,

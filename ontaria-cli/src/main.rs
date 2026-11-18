@@ -7,8 +7,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand, ValueEnum};
 use ontaria::{
-    CacheManager, Class, LangPref, LoadOptions, Ontology, Property, SearchResults, Warning,
-    existing_file, file_url,
+    CacheManager, Class, FetchLimits, LangPref, LoadOptions, Ontology, Property, SearchResults,
+    Warning, existing_file, file_url, is_remote, parse_age,
 };
 
 #[cfg(feature = "mcp")]
@@ -75,9 +75,17 @@ enum Command {
     Fetch {
         #[arg(value_name = "URL_OR_PATH")]
         url: String,
+        /// Revalidate with ETag and Last-Modified when the cache already has the URL.
+        #[arg(long)]
+        refresh: bool,
     },
     /// List cached ontologies.
     ListCached,
+    /// Cache maintenance.
+    Cache {
+        #[command(subcommand)]
+        command: CacheCommand,
+    },
     GetClass {
         #[arg(value_name = "TERM")]
         term: String,
@@ -168,6 +176,31 @@ enum Command {
         #[arg(long)]
         owl_rl: bool,
     },
+    /// Check, apply, or reverse a YAML mapping.
+    Map {
+        #[command(subcommand)]
+        command: MapCommand,
+    },
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum CacheCommand {
+    List,
+    /// Delete entries older than a duration such as 30d, 12h, or 15m.
+    Prune {
+        #[arg(long, value_name = "DURATION")]
+        older_than: String,
+    },
+    Verify,
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum MapCommand {
+    Validate { mapping: PathBuf },
+    Apply { mapping: PathBuf, input: PathBuf },
+    Reverse { mapping: PathBuf, input: PathBuf },
 }
 
 #[derive(Subcommand)]
@@ -227,8 +260,9 @@ fn main() -> ExitCode {
 fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
     let options = options_from(&cli);
     match cli.command {
-        Command::Fetch { url } => fetch(&options, &url, cli.offline)?,
+        Command::Fetch { url, refresh } => fetch(&options, &url, cli.offline, refresh)?,
         Command::ListCached => list_cached(&options)?,
+        Command::Cache { command } => return cache_command(&options, command),
         Command::GetClass { term, inherited } => {
             get_class(&cli.ontology, &term, inherited, &options)?
         }
@@ -271,6 +305,7 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
             return serve::serve(ontology, &bind);
         }
         Command::Reason { owl_rl } => return reason(&cli.ontology, &options, owl_rl),
+        Command::Map { command } => return map_command(&cli.ontology, &options, command),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -307,12 +342,7 @@ fn open_cache(options: &LoadOptions) -> ontaria::Result<CacheManager> {
     }
 }
 
-fn fetch(options: &LoadOptions, url: &str, offline: bool) -> ontaria::Result<()> {
-    if offline {
-        return Err(ontaria::Error::message(
-            "fetch needs the network; omit --offline",
-        ));
-    }
+fn fetch(options: &LoadOptions, url: &str, offline: bool, refresh: bool) -> ontaria::Result<()> {
     let cache = open_cache(options)?;
     let meta = if let Some(path) = existing_file(url) {
         let bytes = fs::read(&path).map_err(|source| ontaria::Error::Read {
@@ -320,10 +350,32 @@ fn fetch(options: &LoadOptions, url: &str, offline: bool) -> ontaria::Result<()>
             source,
         })?;
         cache.save(&file_url(&path), &bytes)?
+    } else if is_remote(url) {
+        if offline {
+            return Err(ontaria::Error::message(
+                "fetch needs the network; omit --offline",
+            ));
+        }
+        cache.fetch_limited(url, &FetchLimits::default(), refresh)?
     } else {
-        cache.fetch(url)?
+        return Err(ontaria::Error::message(format!(
+            "ontology not cached: {url} (run 'fetch' first)"
+        )));
     };
     print_success(&meta, &[] as &[Warning])
+}
+
+fn cache_command(options: &LoadOptions, command: CacheCommand) -> ontaria::Result<ExitCode> {
+    let cache = open_cache(options)?;
+    match command {
+        CacheCommand::List => print_success(cache.list()?, &[])?,
+        CacheCommand::Prune { older_than } => {
+            let removed = cache.prune(parse_age(&older_than)?)?;
+            print_success(&removed, &[])?;
+        }
+        CacheCommand::Verify => print_success(cache.verify()?, &[])?,
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn list_cached(options: &LoadOptions) -> ontaria::Result<()> {
@@ -587,7 +639,7 @@ fn generate(
     let (ontology, warnings) = ontology_for(spec, options)?;
     match target {
         GenTarget::Context { out } => emit(
-            &ontaria::jsonld_context(&ontology),
+            ontaria::jsonld_context(&ontology),
             out.as_deref(),
             &warnings,
         ),
@@ -701,6 +753,56 @@ fn reason(spec: &Option<String>, options: &LoadOptions, owl_rl: bool) -> ontaria
         .collect::<Vec<_>>();
     print_success(&inferred, &warnings)?;
     Ok(ExitCode::SUCCESS)
+}
+
+fn map_command(
+    spec: &Option<String>,
+    options: &LoadOptions,
+    command: MapCommand,
+) -> ontaria::Result<ExitCode> {
+    match command {
+        MapCommand::Validate { mapping } => {
+            let (ontology, warnings) = ontology_for(spec, options)?;
+            let mapping = read_mapping(&mapping)?;
+            let report = ontaria::validate_mapping(&ontology, &mapping);
+            let fail = report.has_errors();
+            print_success(&report, &warnings)?;
+            Ok(if fail {
+                ExitCode::from(1)
+            } else {
+                ExitCode::SUCCESS
+            })
+        }
+        MapCommand::Apply { mapping, input } => {
+            let mapping = read_mapping(&mapping)?;
+            let value = read_json(&input)?;
+            print_success(ontaria::apply(&mapping, &value)?, &[])?;
+            Ok(ExitCode::SUCCESS)
+        }
+        MapCommand::Reverse { mapping, input } => {
+            let mapping = read_mapping(&mapping)?;
+            let value = read_json(&input)?;
+            print_success(ontaria::reverse(&mapping, &value)?, &[])?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn read_mapping(path: &Path) -> ontaria::Result<ontaria::Mapping> {
+    let text = fs::read_to_string(path).map_err(|source| ontaria::Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    ontaria::load_mapping(&text)
+}
+
+fn read_json(path: &Path) -> ontaria::Result<serde_json::Value> {
+    let bytes = fs::read(path).map_err(|source| ontaria::Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    serde_json::from_slice(&bytes)
+        .map_err(|err| ontaria::Error::message(format!("invalid JSON: {err}")))
 }
 
 fn read_ontology(path: &Path) -> ontaria::Result<Ontology> {

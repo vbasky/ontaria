@@ -1,0 +1,36 @@
+[advisories]
+yanked = "warn"
+ignore = [
+    # serde_yaml 0.9 is the mapping parser. It depends on the archived
+    # unsafe-libyaml crate, and that advisory has no fixed release.
+    "RUSTSEC-2024-0449",
+    # oxrdfxml 0.2.5 requires quick-xml 0.37. Fetch bodies are capped at 32 MiB.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "MPL-2.0",
+    "BSD-2-Clause",
+    "CC0-1.0",
+    # CA certificates bundled by webpki-roots, which ureq pulls in through rustls.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+unused-allowed-license = "allow"
+
+[bans]
+multiple-versions = "warn"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
