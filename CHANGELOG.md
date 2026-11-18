@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.0
+
+- `validate` checks instance data and exits 1 when the report has errors.
+- `gen context` writes a JSON-LD `@context`. `gen rust` writes Rust constants. `ontaria::codegen::generate` is the `build.rs` helper.
+- The `codegen` feature re-exports `terms!` from `ontaria-macros`.
+
 ## 0.2.0
 
 - The model keeps RDFS, OWL, and SKOS terms: equivalents, disjointness, boolean class expressions, property characteristics, qualified restrictions, individuals, concepts, and ontology metadata.

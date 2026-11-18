@@ -1,0 +1,18 @@
+[package]
+name = "ontaria-macros"
+version = "0.3.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Proc macro that turns an ontology into Rust constants"
+license = "MIT"
+repository = "https://github.com/vbasky/ontaria"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+oxrdf = "0.3.5"
+oxttl = "0.2.5"
+proc-macro2 = "1"
+quote = "1"
+syn = "2"

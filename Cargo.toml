@@ -1,6 +1,6 @@
 [package]
 name = "ontaria"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Parse RDF Schema and OWL ontologies and query them"
@@ -11,15 +11,18 @@ keywords = ["rdf", "owl", "json-ld", "ontology"]
 categories = ["parser-implementations"]
 
 [workspace]
-members = [".", "ontaria-cli"]
+members = [".", "ontaria-cli", "ontaria-macros"]
 resolver = "2"
 
 [features]
 default = ["fetch"]
 ## Download ontologies with ureq. Turn this off for offline and embedded use.
 fetch = ["dep:ureq"]
+## Re-export the `terms!` proc macro from `ontaria-macros`.
+codegen = ["dep:ontaria-macros"]
 
 [dependencies]
+ontaria-macros = { path = "ontaria-macros", optional = true }
 oxjsonld = "0.2.7"
 oxrdf = "0.3.5"
 oxrdfxml = "0.2.5"

@@ -26,6 +26,7 @@
 
 mod cache;
 mod catalog;
+mod codegen;
 mod error;
 mod extract;
 mod load;
@@ -33,10 +34,12 @@ mod manager;
 mod model;
 mod parser;
 mod query;
+mod validate;
 mod vocab;
 
 pub use cache::{CacheManager, CacheMetadata, FetchLimits, VerifyReport, default_cache_dir};
 pub use catalog::Catalog;
+pub use codegen::{generate, jsonld_context, rust_source};
 pub use error::{Error, Result, Warning, WarningCode};
 pub use load::{LoadOptions, Loaded, existing_file, file_url, is_remote, load_ontology, parse_age};
 pub use model::{
@@ -45,6 +48,13 @@ pub use model::{
     ResourceValue, Statement, TermKind,
 };
 pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle, parse_with_format};
+pub use validate::{
+    Severity, ValidationIssue, ValidationReport, validate_graph, validate_json, validate_rdf,
+    validate_statements,
+};
+
+#[cfg(feature = "codegen")]
+pub use ontaria_macros::terms;
 pub use query::{
     ClassDetails, ClassPropertiesResult, PropertyDetails, PropertyUsage, SearchResults,
 };
