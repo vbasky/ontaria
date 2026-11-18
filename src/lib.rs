@@ -27,9 +27,12 @@
 mod cache;
 mod catalog;
 mod codegen;
+mod diff;
 mod error;
 mod extract;
+mod lint;
 mod load;
+mod lockfile;
 mod manager;
 mod model;
 mod parser;
@@ -40,8 +43,11 @@ mod vocab;
 pub use cache::{CacheManager, CacheMetadata, FetchLimits, VerifyReport, default_cache_dir};
 pub use catalog::Catalog;
 pub use codegen::{generate, jsonld_context, rust_source};
+pub use diff::{ChangeKind, OntologyDiff, SemverBump, TermChange, diff};
 pub use error::{Error, Result, Warning, WarningCode};
+pub use lint::{LintOptions, lint};
 pub use load::{LoadOptions, Loaded, existing_file, file_url, is_remote, load_ontology, parse_age};
+pub use lockfile::{LockEntry, LockFile};
 pub use model::{
     Annotation, Class, ClassExpression, Concept, ConceptScheme, Fact, Individual, LangPref,
     LangString, Ontology, OntologyMetadata, Property, PropertyRef, PropertyType, Resource,

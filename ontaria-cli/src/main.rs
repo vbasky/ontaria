@@ -43,6 +43,14 @@ struct Cli {
     #[arg(long, global = true, value_name = "TAGS")]
     lang: Option<String>,
 
+    /// Fail when a cached file does not match the lock file.
+    #[arg(long, global = true)]
+    locked: bool,
+
+    /// Lock file to read or write. Defaults to ontaria.lock.json with --locked.
+    #[arg(long, global = true, value_name = "FILE")]
+    lock: Option<PathBuf>,
+
     /// Do not use the network. A missing cache entry is an error.
     #[arg(long, global = true)]
     offline: bool,
@@ -124,6 +132,20 @@ enum Command {
         #[command(subcommand)]
         target: GenTarget,
     },
+    /// Compare two ontology files.
+    Diff {
+        before: PathBuf,
+        after: PathBuf,
+        /// Exit 1 when the value is `breaking`.
+        #[arg(long, value_name = "breaking")]
+        fail_on: Option<String>,
+    },
+    /// Lint an ontology.
+    Lint {
+        /// Exit 1 on warnings when the value is `warnings`.
+        #[arg(long, value_name = "warnings")]
+        deny: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -177,6 +199,12 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
         }
         Command::Validate { data } => return validate(&cli.ontology, &options, &data),
         Command::Gen { target } => generate(&cli.ontology, &options, target)?,
+        Command::Diff {
+            before,
+            after,
+            fail_on,
+        } => return diff_files(&before, &after, fail_on.as_deref()),
+        Command::Lint { deny } => return lint_file(&cli.ontology, &options, deny.as_deref()),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -199,6 +227,8 @@ fn options_from(cli: &Cli) -> LoadOptions {
         } else {
             LangPref::default()
         },
+        locked: cli.locked,
+        lock_path: cli.lock.clone(),
         allow_network: false,
         ..LoadOptions::default()
     }
@@ -507,6 +537,44 @@ fn emit_text(text: &str, out: Option<&Path>, warnings: &[Warning]) -> ontaria::R
     } else {
         print_success(text, warnings)
     }
+}
+
+fn diff_files(before: &Path, after: &Path, fail_on: Option<&str>) -> ontaria::Result<ExitCode> {
+    let left = read_ontology(before)?;
+    let right = read_ontology(after)?;
+    let report = ontaria::diff(&left, &right);
+    let fail = fail_on == Some("breaking") && report.has_breaking();
+    print_success(&report, &[])?;
+    Ok(if fail {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn lint_file(
+    spec: &Option<String>,
+    options: &LoadOptions,
+    deny: Option<&str>,
+) -> ontaria::Result<ExitCode> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
+    let deny_warnings = deny == Some("warnings");
+    let report = ontaria::lint(&ontology, &ontaria::LintOptions { deny_warnings });
+    let fail = report.has_errors() || (deny_warnings && !report.issues.is_empty());
+    print_success(&report, &warnings)?;
+    Ok(if fail {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
+}
+
+fn read_ontology(path: &Path) -> ontaria::Result<Ontology> {
+    let bytes = fs::read(path).map_err(|source| ontaria::Error::Read {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    ontaria::parse_document(&bytes, &path.display().to_string())
 }
 
 fn looks_like_json(bytes: &[u8]) -> bool {

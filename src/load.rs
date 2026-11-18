@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::cache::{CacheManager, FetchLimits};
 use crate::catalog::Catalog;
 use crate::error::{Error, Result, Warning, WarningCode};
+use crate::lockfile::{LockEntry, LockFile};
 use crate::model::{LangPref, Ontology};
 use crate::parser::{RdfFormat, detect_format, parse_with_format};
 
@@ -22,6 +23,8 @@ pub struct LoadOptions {
     pub catalog_path: Option<PathBuf>,
     pub lang: LangPref,
     pub refresh: bool,
+    pub locked: bool,
+    pub lock_path: Option<PathBuf>,
     /// When false, a missing cache entry is an error instead of a download.
     pub allow_network: bool,
     pub limits: FetchLimits,
@@ -35,6 +38,8 @@ impl Default for LoadOptions {
             catalog_path: None,
             lang: LangPref::default(),
             refresh: false,
+            locked: false,
+            lock_path: None,
             allow_network: true,
             limits: FetchLimits::default(),
         }
@@ -72,8 +77,18 @@ impl Ontology {
             Some(path) => Some(Catalog::load(path)?),
             None => None,
         };
+        let mut lock = if options.locked || options.lock_path.is_some() {
+            LockFile::load(
+                options
+                    .lock_path
+                    .as_deref()
+                    .unwrap_or(Path::new("ontaria.lock.json")),
+            )?
+        } else {
+            LockFile::default()
+        };
         let mut visited = HashSet::new();
-        let mut ontology = load_one(source, options, &cache, catalog.as_ref(), true)?;
+        let mut ontology = load_one(source, options, &cache, catalog.as_ref(), &mut lock, true)?;
         if options.follow_imports {
             let mut pending = ontology.imports.clone();
             let mut index = 0;
@@ -90,7 +105,7 @@ impl Ontology {
                     );
                     continue;
                 }
-                match load_one(&iri, options, &cache, catalog.as_ref(), false) {
+                match load_one(&iri, options, &cache, catalog.as_ref(), &mut lock, false) {
                     Ok(imported) => {
                         pending.extend(imported.imports.iter().cloned());
                         ontology.absorb(&imported);
@@ -108,6 +123,11 @@ impl Ontology {
             }
         }
         ontology.apply_language(&options.lang);
+        if let Some(path) = &options.lock_path
+            && !options.locked
+        {
+            lock.save(path)?;
+        }
         Ok(ontology)
     }
 }
@@ -117,6 +137,7 @@ fn load_one(
     options: &LoadOptions,
     cache: &CacheManager,
     catalog: Option<&Catalog>,
+    lock: &mut LockFile,
     top_level: bool,
 ) -> Result<Ontology> {
     if let Some(catalog) = catalog
@@ -152,6 +173,21 @@ fn load_one(
             cache.fetch_limited(source, &options.limits, options.refresh || cached)?;
         }
         let bytes = cache.load(source)?;
+        if options.locked {
+            lock.check(source, &bytes)?;
+        } else if options.lock_path.is_some() {
+            let meta = cache.metadata(source).ok();
+            lock.upsert(LockEntry {
+                iri: source.to_string(),
+                url: source.to_string(),
+                sha256: crate::cache::sha256_hex(&bytes),
+                fetched_at: meta
+                    .as_ref()
+                    .map(|item| item.download_time.clone())
+                    .unwrap_or_default(),
+                etag: meta.and_then(|item| item.etag),
+            });
+        }
         let format = cache
             .metadata(source)
             .ok()
@@ -286,6 +322,8 @@ pub fn parse_age(text: &str) -> Result<Duration> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cache::CacheManager;
+    use crate::lockfile::{LockEntry, LockFile};
 
     #[test]
     fn remote_import_refuses_a_file_url() {
@@ -315,6 +353,43 @@ mod tests {
                 .iter()
                 .any(|warning| { warning.message.contains("refusing to read a local file") })
         );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn locked_load_fails_when_the_digest_does_not_match() {
+        let dir = std::env::temp_dir().join(format!("ontaria-lock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let cache = CacheManager::open(dir.join("cache")).unwrap();
+        let url = "http://example.org/locked";
+        cache
+            .save(
+                url,
+                br#"
+                @prefix owl: <http://www.w3.org/2002/07/owl#> .
+                <http://example.org/locked> a owl:Ontology .
+                "#,
+            )
+            .unwrap();
+        let lock_path = dir.join("ontaria.lock.json");
+        let mut lock = LockFile::default();
+        lock.upsert(LockEntry {
+            iri: url.to_string(),
+            url: url.to_string(),
+            sha256: "0".repeat(64),
+            fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            etag: None,
+        });
+        lock.save(&lock_path).unwrap();
+        let options = LoadOptions {
+            cache_dir: Some(dir.join("cache")),
+            locked: true,
+            lock_path: Some(lock_path),
+            allow_network: false,
+            ..LoadOptions::default()
+        };
+        let err = Ontology::load(url, &options).unwrap_err();
+        assert!(matches!(err, Error::LockMismatch { .. }));
         let _ = fs::remove_dir_all(&dir);
     }
 }

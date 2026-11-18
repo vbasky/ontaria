@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- `diff` classifies added, removed, and changed terms and suggests a semver bump. `--fail-on breaking` exits 1 when the bump is major.
+- `lint` reports missing labels, missing domain or range, cycles, undefined restriction terms, unused prefixes, deprecated terms that are still referenced, and IRIs outside the ontology namespace. `--deny warnings` exits 1 on warnings.
+- `--lock` writes a lock file of IRI, URL, SHA-256, and fetch time. `--locked` fails when the cached bytes do not match.
+
 ## 0.3.0
 
 - `validate` checks instance data and exits 1 when the report has errors.
