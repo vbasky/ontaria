@@ -108,11 +108,296 @@ pub fn rust_source(ontology: &Ontology) -> String {
     out
 }
 
+/// TypeScript constants.
+pub fn typescript_source(ontology: &Ontology) -> String {
+    source_block(ontology, "export const ", " = \"", "\";")
+}
+
+/// Go constants.
+pub fn go_source(ontology: &Ontology) -> String {
+    let mut out = String::from("package ontology\n\nconst (\n");
+    for (iri, name) in names(
+        ontology
+            .classes
+            .keys()
+            .chain(ontology.properties.keys())
+            .map(String::as_str),
+    ) {
+        out.push_str(&format!("\t{name} = \"{iri}\"\n"));
+    }
+    out.push_str(")\n");
+    out
+}
+
+/// Python constants.
+pub fn python_source(ontology: &Ontology) -> String {
+    source_block(ontology, "", " = \"", "\"")
+}
+
+fn source_block(ontology: &Ontology, prefix: &str, mid: &str, end: &str) -> String {
+    let mut out = String::new();
+    for (iri, name) in names(
+        ontology
+            .classes
+            .keys()
+            .chain(ontology.properties.keys())
+            .map(String::as_str),
+    ) {
+        out.push_str(&format!("{prefix}{name}{mid}{iri}{end}\n"));
+    }
+    out
+}
+
+/// One JSON Schema document per class, keyed by class IRI.
+pub fn json_schema(ontology: &Ontology) -> BTreeMap<String, Value> {
+    let mut schemas = BTreeMap::new();
+    for class in ontology.classes.values() {
+        let mut properties = Map::new();
+        let mut required = Vec::new();
+        for restriction in &class.properties {
+            let Some(property) = ontology.properties.get(&restriction.uri) else {
+                continue;
+            };
+            let name = ident_local(&property.uri);
+            properties.insert(name.clone(), schema_for(property));
+            if restriction.required
+                || restriction.min.unwrap_or(0) >= 1
+                || restriction.some_values_from.is_some()
+            {
+                required.push(Value::String(name));
+            }
+        }
+        let mut schema = Map::new();
+        schema.insert(
+            "$schema".to_string(),
+            Value::String("https://json-schema.org/draft/2020-12/schema".to_string()),
+        );
+        schema.insert("$id".to_string(), Value::String(class.uri.clone()));
+        schema.insert(
+            "title".to_string(),
+            Value::String(if class.label.is_empty() {
+                local_name(&class.uri).to_string()
+            } else {
+                class.label.clone()
+            }),
+        );
+        schema.insert("type".to_string(), Value::String("object".to_string()));
+        schema.insert("properties".to_string(), Value::Object(properties));
+        if !required.is_empty() {
+            schema.insert("required".to_string(), Value::Array(required));
+        }
+        schemas.insert(class.uri.clone(), Value::Object(schema));
+    }
+    schemas
+}
+
+fn schema_for(property: &Property) -> Value {
+    let datatype = property.range.first().map(String::as_str).unwrap_or("");
+    let type_name = match local_name(datatype) {
+        "integer" | "int" | "long" => "integer",
+        "decimal" | "float" | "double" => "number",
+        "boolean" => "boolean",
+        _ if property.kind == PropertyType::ObjectProperty => "string",
+        _ => "string",
+    };
+    json!({ "type": type_name, "x-ontaria-iri": property.uri })
+}
+
+/// SHACL node shapes derived from domain, range, and cardinality.
+pub fn shacl_shapes(ontology: &Ontology) -> String {
+    let mut lines = vec![
+        "@prefix sh: <http://www.w3.org/ns/shacl#> .".to_string(),
+        "@prefix owl: <http://www.w3.org/2002/07/owl#> .".to_string(),
+    ];
+    for class in ontology.classes.values() {
+        lines.push(format!("<{}Shape> a sh:NodeShape ;", class.uri));
+        lines.push(format!("  sh:targetClass <{}> ;", class.uri));
+        let refs: Vec<_> = class.properties.iter().collect();
+        if refs.is_empty() {
+            lines.pop();
+            lines.push(format!("<{}Shape> a sh:NodeShape ;", class.uri));
+            lines.push(format!("  sh:targetClass <{}> .", class.uri));
+            continue;
+        }
+        for (index, restriction) in refs.iter().enumerate() {
+            let end = if index + 1 == refs.len() { " ." } else { " ;" };
+            let min = restriction
+                .min
+                .or(restriction.exact)
+                .unwrap_or(if restriction.required { 1 } else { 0 });
+            lines.push("  sh:property [".to_string());
+            lines.push(format!("    sh:path <{}> ;", restriction.uri));
+            if min > 0 {
+                lines.push(format!("    sh:minCount {min} ;"));
+            }
+            if let Some(max) = restriction.max.or(restriction.exact) {
+                lines.push(format!("    sh:maxCount {max} ;"));
+            }
+            if let Some(property) = ontology.properties.get(&restriction.uri) {
+                if let Some(range) = property
+                    .range
+                    .iter()
+                    .find(|iri| iri.starts_with(vocab::XSD))
+                {
+                    lines.push(format!("    sh:datatype <{range}> ;"));
+                } else if let Some(range) = property.range.first() {
+                    lines.push(format!("    sh:class <{range}> ;"));
+                }
+            }
+            if let Some(on_class) = &restriction.on_class {
+                lines.push(format!(
+                    "    sh:qualifiedValueShape [ sh:class <{on_class}> ] ;"
+                ));
+            }
+            lines.push(format!("  ]{end}"));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// Property-graph schema in Ontaria's `.pg` text format.
+///
+/// Classes become nodes, datatype properties become fields, and object
+/// properties become edges. Cardinality is written as `@card`. Constructs
+/// this format cannot express are listed under `untranslated:`.
+pub fn property_graph(ontology: &Ontology) -> String {
+    let mut lines = Vec::new();
+    let mut untranslated = Vec::new();
+    for class in ontology.classes.values() {
+        lines.push(format!("node {} <{}>", local_name(&class.uri), class.uri));
+        if !class.label.is_empty() {
+            lines.push(format!("  label \"{}\"", escape(&class.label)));
+        }
+        if !class.union_of.is_empty()
+            || !class.intersection_of.is_empty()
+            || class.complement_of.is_some()
+        {
+            untranslated.push(format!("{} uses a class expression", class.uri));
+        }
+        let mut attached: Vec<(String, String)> = class
+            .properties
+            .iter()
+            .map(|restriction| (restriction.uri.clone(), restriction.cardinality.clone()))
+            .collect();
+        for property in ontology.properties.values() {
+            if attached.iter().any(|(uri, _)| uri == &property.uri) {
+                continue;
+            }
+            let domain_hit = property.domain.iter().any(|iri| iri == &class.uri);
+            let range_hit =
+                property.domain.is_empty() && property.range.iter().any(|iri| iri == &class.uri);
+            if domain_hit || range_hit {
+                attached.push((property.uri.clone(), String::new()));
+            }
+        }
+        attached.sort();
+        for (uri, card) in attached {
+            let Some(property) = ontology.properties.get(&uri) else {
+                untranslated.push(format!(
+                    "restriction {uri} on {} has no property declaration",
+                    class.uri
+                ));
+                continue;
+            };
+            let card = if card.is_empty() {
+                "0..*"
+            } else {
+                card.as_str()
+            };
+            match property.kind {
+                PropertyType::DatatypeProperty | PropertyType::AnnotationProperty => {
+                    let datatype = property
+                        .range
+                        .first()
+                        .map(|iri| local_name(iri).to_string())
+                        .unwrap_or_else(|| "string".to_string());
+                    lines.push(format!(
+                        "  field {} {datatype} @card {card}",
+                        local_name(&property.uri)
+                    ));
+                }
+                PropertyType::ObjectProperty => {
+                    let target = property
+                        .range
+                        .first()
+                        .map(|iri| local_name(iri).to_string())
+                        .unwrap_or_else(|| "Resource".to_string());
+                    lines.push(format!(
+                        "  edge {} -> {target} @card {card}",
+                        local_name(&property.uri)
+                    ));
+                }
+            }
+        }
+    }
+    lines.push("untranslated:".to_string());
+    if untranslated.is_empty() {
+        lines.push("  -".to_string());
+    } else {
+        for item in untranslated {
+            lines.push(format!("  - {item}"));
+        }
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+/// Markdown documentation with a Mermaid class diagram.
+pub fn markdown_docs(ontology: &Ontology) -> String {
+    let mut out = String::new();
+    let title = if ontology.metadata.labels.is_empty() {
+        ontology.uri.clone()
+    } else {
+        ontology.metadata.labels[0].value.clone()
+    };
+    out.push_str(&format!("# {title}\n\n"));
+    out.push_str("```mermaid\nclassDiagram\n");
+    for class in ontology.classes.values() {
+        let name = local_name(&class.uri);
+        out.push_str(&format!("  class {name}\n"));
+        for parent in &class.parents {
+            if ontology.classes.contains_key(parent) {
+                out.push_str(&format!("  {} <|-- {name}\n", local_name(parent)));
+            }
+        }
+    }
+    out.push_str("```\n\n");
+    for class in ontology.classes.values() {
+        out.push_str(&format!("## {}\n\n", display(&class.label, &class.uri)));
+        out.push_str(&format!("`{}`\n\n", class.uri));
+        if !class.comment.is_empty() {
+            out.push_str(&format!("{}\n\n", class.comment));
+        }
+    }
+    for property in ontology.properties.values() {
+        out.push_str(&format!(
+            "## {}\n\n",
+            display(&property.label, &property.uri)
+        ));
+        out.push_str(&format!("`{}`\n\n", property.uri));
+        out.push_str(&format!("Kind: `{}`.\n\n", property.kind.as_str()));
+    }
+    out
+}
+
 fn wants_set(property: &Property) -> bool {
     if property.functional {
         return false;
     }
     true
+}
+
+fn display(label: &str, iri: &str) -> String {
+    if label.is_empty() {
+        local_name(iri).to_string()
+    } else {
+        label.to_string()
+    }
+}
+
+fn escape(text: &str) -> String {
+    text.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
 fn ident_local(iri: &str) -> String {
@@ -272,5 +557,24 @@ mod tests {
                 .ends_with("string")
         );
         assert_eq!(context["@context"]["knows"]["@container"], "@set");
+        let schema = json_schema(&ontology);
+        assert!(
+            schema["http://example.org/Person"]["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|item| item == "name")
+        );
+        let shapes = shacl_shapes(&ontology);
+        assert!(shapes.contains("sh:NodeShape"));
+        assert!(shapes.contains("sh:minCount 1"));
+        let pg = property_graph(&ontology);
+        assert!(pg.contains("node Person <http://example.org/Person>"));
+        assert!(pg.contains("field name string @card"));
+        assert!(pg.contains("edge knows -> Person @card"));
+        assert!(pg.contains("untranslated:"));
+        let docs = markdown_docs(&ontology);
+        assert!(docs.contains("classDiagram"));
+        assert!(docs.contains("Person"));
     }
 }

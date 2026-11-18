@@ -45,7 +45,10 @@ mod vocab;
 
 pub use cache::{CacheManager, CacheMetadata, FetchLimits, VerifyReport, default_cache_dir};
 pub use catalog::Catalog;
-pub use codegen::{generate, jsonld_context, rust_source};
+pub use codegen::{
+    generate, go_source, json_schema, jsonld_context, markdown_docs, property_graph, python_source,
+    rust_source, shacl_shapes, typescript_source,
+};
 pub use diff::{ChangeKind, OntologyDiff, SemverBump, TermChange, diff};
 pub use error::{Error, Result, Warning, WarningCode};
 pub use lint::{LintOptions, lint};

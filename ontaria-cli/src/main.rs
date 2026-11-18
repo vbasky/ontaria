@@ -136,7 +136,7 @@ enum Command {
         #[arg(long)]
         turtle: bool,
     },
-    /// Generate a JSON-LD context or Rust constants.
+    /// Generate a context, bindings, schema, shapes, or docs.
     Gen {
         #[command(subcommand)]
         target: GenTarget,
@@ -173,6 +173,34 @@ enum GenTarget {
         out: Option<PathBuf>,
     },
     Rust {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Typescript {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Go {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Python {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    JsonSchema {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Shacl {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Pg {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    Docs {
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -560,6 +588,35 @@ fn generate(
         GenTarget::Rust { out } => {
             emit_text(&ontaria::rust_source(&ontology), out.as_deref(), &warnings)
         }
+        GenTarget::Typescript { out } => emit_text(
+            &ontaria::typescript_source(&ontology),
+            out.as_deref(),
+            &warnings,
+        ),
+        GenTarget::Go { out } => {
+            emit_text(&ontaria::go_source(&ontology), out.as_deref(), &warnings)
+        }
+        GenTarget::Python { out } => emit_text(
+            &ontaria::python_source(&ontology),
+            out.as_deref(),
+            &warnings,
+        ),
+        GenTarget::JsonSchema { out } => {
+            emit(ontaria::json_schema(&ontology), out.as_deref(), &warnings)
+        }
+        GenTarget::Shacl { out } => {
+            emit_text(&ontaria::shacl_shapes(&ontology), out.as_deref(), &warnings)
+        }
+        GenTarget::Pg { out } => emit_text(
+            &ontaria::property_graph(&ontology),
+            out.as_deref(),
+            &warnings,
+        ),
+        GenTarget::Docs { out } => emit_text(
+            &ontaria::markdown_docs(&ontology),
+            out.as_deref(),
+            &warnings,
+        ),
     }
 }
 

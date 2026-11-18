@@ -35,6 +35,13 @@ ontaria -o ./vocab.ttl lint --deny warnings
 ontaria diff ./before.ttl ./after.ttl --fail-on breaking
 ontaria -o ./vocab.ttl gen context --out ./context.jsonld
 ontaria -o ./vocab.ttl gen rust --out ./src/terms.rs
+ontaria -o ./vocab.ttl gen typescript --out ./terms.ts
+ontaria -o ./vocab.ttl gen go --out ./terms.go
+ontaria -o ./vocab.ttl gen python --out ./terms.py
+ontaria -o ./vocab.ttl gen json-schema --out ./schema.json
+ontaria -o ./vocab.ttl gen shacl --out ./shapes.ttl
+ontaria -o ./vocab.ttl gen pg --out ./model.pg
+ontaria -o ./vocab.ttl gen docs --out ./VOCAB.md
 ```
 
 `validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `validate --shacl` needs the CLI `shacl` feature.

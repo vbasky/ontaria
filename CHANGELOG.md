@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- `gen typescript`, `gen go`, and `gen python` emit language bindings. `gen json-schema`, `gen shacl`, `gen pg`, and `gen docs` emit JSON Schema, SHACL shape skeletons, a property-graph text file, and Markdown with a Mermaid diagram.
+- `ontaria-wasm` is a `cdylib` for browser and Node. `ontaria-python` is a pyo3 module. Both load documents the caller passes and do not fetch the network.
+
 ## 0.5.0
 
 - `validate --shacl` checks RDF instance data against SHACL shapes. The `shacl` feature uses `shacl-rust`. Without it, `validate_shacl` returns `Error::Feature`.
