@@ -180,7 +180,7 @@ impl CacheManager {
             let agent: ureq::Agent = config.into();
             let mut request = agent
                 .get(url)
-                .header("User-Agent", "ontaria/0.6")
+                .header("User-Agent", "ontaria/0.7")
                 .header(
                     "Accept",
                     "text/turtle, application/n-triples, application/n-quads, application/trig, application/rdf+xml, application/ld+json, application/json, */*;q=0.1",

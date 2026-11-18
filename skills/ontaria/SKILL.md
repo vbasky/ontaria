@@ -42,9 +42,10 @@ ontaria -o ./vocab.ttl gen json-schema --out ./schema.json
 ontaria -o ./vocab.ttl gen shacl --out ./shapes.ttl
 ontaria -o ./vocab.ttl gen pg --out ./model.pg
 ontaria -o ./vocab.ttl gen docs --out ./VOCAB.md
+ontaria -o ./vocab.ttl reason
 ```
 
-`validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `validate --shacl` needs the CLI `shacl` feature.
+`validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `validate --shacl` needs the CLI `shacl` feature. `reason --owl-rl` needs the CLI `reasoning` feature. Without that feature, `apply_owl_rl` returns `Error::Feature`.
 
 ## MCP and HTTP
 

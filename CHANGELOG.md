@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.0
+
+- `reason` materializes RDFS subclass, subproperty, domain, and range consequences. Inferred triples are marked `inferred: true`. Asserted triples stay as they were written.
+- `reason --owl-rl` runs OWL 2 RL through `reasonable` when the `reasoning` feature is on. The reasoner is not stored on `Ontology`. Without the feature, `apply_owl_rl` returns `Error::Feature`.
+
 ## 0.6.0
 
 - `gen typescript`, `gen go`, and `gen python` emit language bindings. `gen json-schema`, `gen shacl`, `gen pg`, and `gen docs` emit JSON Schema, SHACL shape skeletons, a property-graph text file, and Markdown with a Mermaid diagram.

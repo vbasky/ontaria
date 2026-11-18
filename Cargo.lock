@@ -342,6 +342,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "datafrog"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a0afaad2b26fa326569eb264b1363e8ae3357618c43982b3f285f0774ce76b69"
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -361,6 +367,12 @@ dependencies = [
  "const-oid",
  "crypto-common 0.2.2",
 ]
+
+[[package]]
+name = "disjoint-sets"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ccbbca7d6a247007ca2535c616d4bb4a5fcad176ef0218671f96b88c52c3d34"
 
 [[package]]
 name = "dyn-clone"
@@ -756,7 +768,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "ontaria"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ontaria-macros",
  "oxigraph",
@@ -764,18 +776,19 @@ dependencies = [
  "oxrdf",
  "oxrdfxml",
  "oxttl",
+ "reasonable",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "shacl-rust",
- "thiserror",
+ "thiserror 2.0.21",
  "toml",
  "ureq",
 ]
 
 [[package]]
 name = "ontaria-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "ontaria",
@@ -789,7 +802,7 @@ dependencies = [
 
 [[package]]
 name = "ontaria-macros"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "oxrdf",
  "oxttl",
@@ -800,7 +813,7 @@ dependencies = [
 
 [[package]]
 name = "ontaria-python"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ontaria",
  "pyo3",
@@ -809,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "ontaria-wasm"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "ontaria",
  "serde_json",
@@ -836,7 +849,7 @@ dependencies = [
  "sparesults",
  "spareval",
  "spargebra",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -864,7 +877,7 @@ dependencies = [
  "oxiri",
  "oxrdf",
  "ryu-js",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -879,7 +892,7 @@ dependencies = [
  "oxsdatatypes",
  "rand",
  "sha2 0.11.1",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -892,7 +905,7 @@ dependencies = [
  "oxrdf",
  "oxrdfxml",
  "oxttl",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -904,8 +917,8 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "oxrdf",
- "quick-xml",
- "thiserror",
+ "quick-xml 0.37.5",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -915,7 +928,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "034779b2d182d5069cd28b1f921ba334cad708ab1340db9776312464b6874b78"
 dependencies = [
  "js-sys",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -928,7 +941,7 @@ dependencies = [
  "oxilangtag",
  "oxiri",
  "oxrdf",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1076,6 +1089,15 @@ dependencies = [
 
 [[package]]
 name = "quick-xml"
+version = "0.36.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7649a7b4df05aed9ea7ec6f628c67c9953a43869b8bc50929569b2999d443fe"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "quick-xml"
 version = "0.37.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "331e97a1af0bf59823e6eadffe373d7b27f485be8748f71471c662c1f269b7fb"
@@ -1154,6 +1176,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "reasonable"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4a008c08bfd0d95385a600ed3647ab54b77d836fbe0e0da1d7f5763f1090092"
+dependencies = [
+ "datafrog",
+ "disjoint-sets",
+ "log",
+ "oxrdf",
+ "quick-xml 0.36.2",
+ "rio_api",
+ "rio_turtle",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1226,6 +1264,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "rio_api"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9f6196ea9fb6791ce3dcd1cfc0d7f1074972aec0572db73dfb7396fcd9c3bc76"
+
+[[package]]
+name = "rio_turtle"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eefbe56cb005507d4517649f5d113b874e29b8559a7b7a263655aeb81570246c"
+dependencies = [
+ "oxilangtag",
+ "oxiri",
+ "rio_api",
+]
+
+[[package]]
 name = "rmcp"
 version = "3.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1244,7 +1299,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
- "thiserror",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-util",
  "tracing",
@@ -1514,8 +1569,8 @@ dependencies = [
  "json-event-parser",
  "memchr",
  "oxrdf",
- "quick-xml",
- "thiserror",
+ "quick-xml 0.37.5",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1538,7 +1593,7 @@ dependencies = [
  "sparesults",
  "spargebra",
  "sparopt",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1552,7 +1607,7 @@ dependencies = [
  "oxrdf",
  "peg",
  "rand",
- "thiserror",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -1608,11 +1663,31 @@ checksum = "8c447be3a2abfa84b2d91680c56600bd6b2873866de27b36ec911be705e291da"
 
 [[package]]
 name = "thiserror"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
+dependencies = [
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
 version = "2.0.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 2.0.21",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "1.0.69"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4fee6c4efc90059e10f81e6d42c60a18f76588c3d74cb83a0b242a2b6c7504c1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
 ]
 
 [[package]]

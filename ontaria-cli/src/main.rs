@@ -163,6 +163,11 @@ enum Command {
         #[arg(long, default_value = "127.0.0.1:8080")]
         bind: String,
     },
+    /// Materialize RDFS entailments, or OWL 2 RL with --owl-rl.
+    Reason {
+        #[arg(long)]
+        owl_rl: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -265,6 +270,7 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
             let (ontology, _) = ontology_for(&cli.ontology, &options)?;
             return serve::serve(ontology, &bind);
         }
+        Command::Reason { owl_rl } => return reason(&cli.ontology, &options, owl_rl),
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -678,6 +684,23 @@ fn lint_file(
     } else {
         ExitCode::SUCCESS
     })
+}
+
+fn reason(spec: &Option<String>, options: &LoadOptions, owl_rl: bool) -> ontaria::Result<ExitCode> {
+    let (ontology, warnings) = ontology_for(spec, options)?;
+    let entailed = if owl_rl {
+        ontaria::apply_owl_rl(&ontology)?
+    } else {
+        ontaria::apply_rdfs(&ontology)
+    };
+    let inferred = entailed
+        .statements
+        .iter()
+        .filter(|statement| statement.inferred)
+        .cloned()
+        .collect::<Vec<_>>();
+    print_success(&inferred, &warnings)?;
+    Ok(ExitCode::SUCCESS)
 }
 
 fn read_ontology(path: &Path) -> ontaria::Result<Ontology> {

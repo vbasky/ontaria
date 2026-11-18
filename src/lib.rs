@@ -8,6 +8,7 @@
 //!
 //! * `fetch` — download ontologies with `ureq` (on by default).
 //! * `shacl` — SHACL validation through `shacl-rust`.
+//! * `reasoning` — OWL 2 RL through `reasonable`.
 //! * `codegen` — re-export the [`terms!`](crate::terms) proc macro.
 //!
 //! # Examples
@@ -39,6 +40,7 @@ mod manager;
 mod model;
 mod parser;
 mod query;
+mod reason;
 mod shacl;
 mod validate;
 mod vocab;
@@ -60,6 +62,7 @@ pub use model::{
     ResourceValue, Statement, TermKind,
 };
 pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle, parse_with_format};
+pub use reason::{TypeFacts, apply_owl_rl, apply_rdfs, types_of};
 pub use shacl::validate_shacl;
 pub use validate::{
     Severity, ValidationIssue, ValidationReport, validate_graph, validate_json, validate_rdf,
