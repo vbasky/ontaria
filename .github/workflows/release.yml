@@ -1,8 +1,16 @@
 name: Release
 
+run-name: Release ${{ github.event.inputs.tag || github.ref_name }}
+
 on:
   push:
     tags: [v*]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to build, for example v0.1.0
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -10,6 +18,7 @@ permissions:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
 
 jobs:
   build:
@@ -33,6 +42,21 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+
+      - name: Check the tag matches the crate
+        run: |
+          case "$RELEASE_TAG" in
+            v*) ;;
+            *) echo "::error::expected a v* tag, got '${RELEASE_TAG}'"; exit 1 ;;
+          esac
+          expected="${RELEASE_TAG#v}"
+          got=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+          if [ "$got" != "$expected" ]; then
+            echo "::error::checked out ontaria ${got}, tag is ${RELEASE_TAG}"
+            exit 1
+          fi
 
       - name: Install Rust
         run: |
@@ -47,7 +71,7 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          archive="ontaria-${{ github.ref_name }}-${{ matrix.target }}.tar.gz"
+          archive="ontaria-${{ env.RELEASE_TAG }}-${{ matrix.target }}.tar.gz"
           tar czf "${archive}" ontaria
           echo "archive=${archive}" >> "$GITHUB_ENV"
 
@@ -56,7 +80,7 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          archive="ontaria-${{ github.ref_name }}-${{ matrix.target }}.zip"
+          archive="ontaria-${{ env.RELEASE_TAG }}-${{ matrix.target }}.zip"
           7z a "${archive}" ontaria.exe
           echo "archive=${archive}" >> "$GITHUB_ENV"
 
@@ -72,6 +96,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
 
       - name: Download all binaries
         uses: actions/download-artifact@v4
@@ -88,14 +114,27 @@ jobs:
           done
 
       - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${{ github.ref_name }}"
-          awk -v ver="${VERSION#v}" '
-            $0 == "## " ver { found=1; next }
-            found && /^## / { exit }
-            found && !started && $0 == "" { next }
-            found { started=1; print }
-          ' CHANGELOG.md > /tmp/release-notes.md
+          VERSION="${RELEASE_TAG}"
+          # Rebuilding an existing release keeps its title and notes.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] \
+            && gh release view "$VERSION" --json body,name > /tmp/existing-release.json; then
+            jq -r .body /tmp/existing-release.json > /tmp/release-notes.md
+            echo "RELEASE_NAME=$(jq -r .name /tmp/existing-release.json)" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_NAME=ontaria ${VERSION}" >> "$GITHUB_ENV"
+            : > /tmp/release-notes.md
+          fi
+          if [ ! -s /tmp/release-notes.md ]; then
+            awk -v ver="${VERSION#v}" '
+              $0 == "## " ver { found=1; next }
+              found && /^## / { exit }
+              found && !started && $0 == "" { next }
+              found { started=1; print }
+            ' CHANGELOG.md > /tmp/release-notes.md
+          fi
           if [ ! -s /tmp/release-notes.md ]; then
             echo "::error::CHANGELOG.md has no section for ${VERSION#v}"
             exit 1
@@ -104,14 +143,15 @@ jobs:
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.ref_name }}
-          name: ontaria ${{ github.ref_name }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
           body_path: /tmp/release-notes.md
           files: /tmp/assets/*
           fail_on_unmatched_files: true
 
   publish:
     name: Publish to crates.io
+    if: github.event_name == 'push'
     timeout-minutes: 15
     needs: [release]
     runs-on: ubuntu-latest
@@ -121,7 +161,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           prev=$(gh api "repos/${{ github.repository }}/actions/workflows/release.yml/runs?per_page=5" \
-            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})][0].run_started_at")
+            --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }} and .event == \"push\")][0].run_started_at")
           if [ -z "$prev" ] || [ "$prev" = "null" ]; then
             echo "No prior run found; proceeding."
             exit 0
