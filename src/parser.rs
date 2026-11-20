@@ -945,12 +945,7 @@ mod tests {
         assert_eq!(detect_format(nq), RdfFormat::NQuads);
         let ontology = parse_document(nq, "http://example.org/q").unwrap();
         assert!(ontology.get_class("Item").is_some());
-        assert!(
-            ontology
-                .warnings
-                .iter()
-                .all(|warning| warning.message.is_empty() || true)
-        );
+        assert!(ontology.warnings.is_empty());
 
         let trig = br#"
 @prefix ex: <http://example.org/t#> .
