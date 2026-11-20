@@ -1,8 +1,8 @@
 [package]
 name = "ontaria-cli"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Command-line tool for looking up ontology terms"
 license = "MIT"
 repository = "https://github.com/vbasky/ontaria"
@@ -21,6 +21,7 @@ reasoning = ["ontaria/reasoning"]
 [dependencies]
 clap = { version = "4.6.1", features = ["derive"] }
 ontaria = { path = ".." }
+som = { path = "../third_party/som/implementations/rust" }
 rmcp = { version = "3.9", optional = true, features = ["server", "macros", "transport-io"] }
 schemars = { version = "1", optional = true }
 serde = { version = "1.0.229", features = ["derive"] }

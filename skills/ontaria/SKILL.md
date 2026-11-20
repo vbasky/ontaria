@@ -44,17 +44,19 @@ ontaria -o ./vocab.ttl gen pg --out ./model.pg
 ontaria -o ./vocab.ttl gen docs --out ./VOCAB.md
 ontaria -o ./vocab.ttl reason
 ontaria map validate ./mapping.yml
+ontaria som validate ./message.json
+ontaria som decode ./message.json
 ontaria map apply ./mapping.yml ./record.json
 ontaria map reverse ./mapping.yml ./record.jsonld
 ontaria fetch https://example.org/vocab.ttl --refresh
 ontaria cache verify
 ```
 
-`validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `map validate` exits 1 when a target term is not in the ontology. `validate --shacl` needs the CLI `shacl` feature. `reason --owl-rl` needs the CLI `reasoning` feature. Without that feature, `apply_owl_rl` returns `Error::Feature`. Version 0.8 is pre-1.0. The public API is not frozen. See `STABILITY.md`.
+`som validate` and `som decode` check a Story Object Model 1.0 message with the upstream `som` crate. The argument is a file path or an `http`/`https` URL. `som validate` exits 1 when the message is rejected. `validate` accepts Turtle, RDF/XML, TriG, N-Triples, JSON-LD, EBUCore XML, and MediaInfo JSON. A filesystem path is a valid base IRI. JSON-LD (`@context` or `@graph`) is expanded before the check. Plain JSON is not. `validate` exits 1 when the report has errors. `lint --deny warnings` exits 1 on warnings. `diff --fail-on breaking` exits 1 when the bump is major. `map validate` exits 1 when a target term is not in the ontology. `validate --shacl` needs the CLI `shacl` feature. `reason --owl-rl` needs the CLI `reasoning` feature. Without that feature, `apply_owl_rl` returns `Error::Feature`. Version 0.9 is pre-1.0. The public API is not frozen. See `STABILITY.md`.
 
 ## MCP and HTTP
 
-`ontaria mcp -o ./vocab.ttl` speaks MCP on stdio. Tools are `lookup`, `search`, `hierarchy`, `validate`, and `diff`. Build the CLI with `--features mcp`.
+`ontaria -o ./vocab.ttl mcp` speaks MCP on stdio. Tools are `lookup`, `search`, `hierarchy`, `validate`, and `diff`. Build the CLI with `--features mcp`. Rig and other MCP clients spawn that command. The server negotiates protocol versions 2024-11-05, 2025-03-26, 2025-06-18, and 2025-11-25. It does not serve streamable HTTP. `ontaria serve` is a separate lookup API.
 
 `ontaria serve -o ./vocab.ttl --bind 127.0.0.1:8080` answers GET `/health`, `/class`, `/property`, `/parents`, `/children`, and `/search`.
 

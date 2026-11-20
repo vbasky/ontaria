@@ -4,7 +4,7 @@
 
 Ontaria parses an RDF Schema or OWL ontology and looks up, validates, diffs, and generates from it. The `ontaria` crate is a library. The `ontaria` binary is the `ontaria-cli` crate.
 
-Version 0.8.0 covers the roadmap through mapping. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
+Version 0.9.0 adds Story Object Model checks and EBUCore instance documents. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -18,7 +18,7 @@ Pushing a `v*` tag builds those binaries for macOS, Linux, and Windows, attaches
 The library:
 
 ```toml
-ontaria = "0.8"
+ontaria = "0.9"
 ```
 
 `fetch` is on by default. Disable it for a build with no HTTP client:
@@ -27,11 +27,13 @@ ontaria = "0.8"
 cargo check -p ontaria --no-default-features
 ```
 
-Optional features are `async-fetch`, `shacl`, `reasoning`, and `codegen`. The CLI feature `mcp` builds `ontaria mcp`. The minimum supported Rust version is 1.88.
+Optional features are `async-fetch`, `shacl`, `reasoning`, and `codegen`. The CLI feature `mcp` builds `ontaria mcp`. The library's minimum supported Rust version is 1.88. The `ontaria` binary needs 1.89, which is what the bundled Story Object Model crate requires. CI builds with 1.89.
 
 ## Library
 
-`Ontology::load` reads the file, resolves imports, and returns an immutable `Send + Sync` value. Later queries take `&self` and do not touch the network.
+`Ontology::load` reads the file, resolves imports, and returns an immutable `Send + Sync` value. Later queries take `&self` and do not touch the network. `parse_document` and `validate_rdf` take the bytes plus a base IRI. The base may be an absolute IRI or a filesystem path. A path is stored as a `file://` IRI.
+
+`validate_rdf` reads Turtle, N-Triples, N-Quads, TriG, RDF/XML, and JSON-LD. It also reads EBUCore XML and MediaInfo JSON, which are not RDF, and keeps their text and `#value` fields. `validate_json` checks a `serde_json::Value` and does not expand `@context`. `is_jsonld_document` and `is_ebucore_instance` tell those cases apart.
 
 ```rust
 use ontaria::{LoadOptions, Ontology};
@@ -78,6 +80,8 @@ ontaria --ontology <URL_OR_PATH> gen context|rust|typescript|go|python|json-sche
 ontaria map validate <MAPPING>
 ontaria map apply <MAPPING> <INPUT>
 ontaria map reverse <MAPPING> <INPUT>
+ontaria som validate <URL_OR_PATH>
+ontaria som decode <URL_OR_PATH>
 ontaria --ontology <URL_OR_PATH> reason [--owl-rl]
 ontaria --ontology <URL_OR_PATH> serve [--bind 127.0.0.1:8080]
 ontaria --ontology <URL_OR_PATH> mcp
@@ -107,7 +111,7 @@ Turtle, RDF/XML, JSON-LD, N-Triples, N-Quads, and TriG. Named graphs are merged 
 - named individuals, SKOS concepts and schemes, and ontology metadata
 - declared prefixes, plus the built-in `owl`, `rdf`, `rdfs`, `xsd`, `dcterms`, `skos`, `sh`, `prov`, and `schema` prefixes
 
-The schema.org JSON-LD context is embedded. Other remote contexts need the `fetch` feature.
+The schema.org JSON-LD context is embedded as `@vocab` `https://schema.org/`. Terms expand to that prefix. Dates and URL strings stay literals, which matches the official context: it does not coerce `@type`. Other remote contexts need the `fetch` feature. EBUCore XML (`urn:ebu:metadata-schema:ebucore`) and MediaInfo JSON (`#value`) are read as triples under the EBUCore ontology IRI. Property names follow the element names. They are not rewritten to MediaInfo RDF names such as `frameWidth`.
 
 ## Other crates
 

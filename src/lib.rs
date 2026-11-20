@@ -33,6 +33,7 @@ mod cache;
 mod catalog;
 mod codegen;
 mod diff;
+mod ebucore;
 mod error;
 mod extract;
 mod lint;
@@ -55,6 +56,7 @@ pub use codegen::{
     rust_source, shacl_shapes, typescript_source,
 };
 pub use diff::{ChangeKind, OntologyDiff, SemverBump, TermChange, diff};
+pub use ebucore::is_ebucore_instance;
 pub use error::{Error, Result, Warning, WarningCode};
 pub use lint::{LintOptions, lint};
 pub use load::{LoadOptions, Loaded, existing_file, file_url, is_remote, load_ontology, parse_age};
@@ -65,7 +67,9 @@ pub use model::{
     LangString, Ontology, OntologyMetadata, Property, PropertyRef, PropertyType, Resource,
     ResourceValue, Statement, TermKind,
 };
-pub use parser::{RdfFormat, detect_format, parse_document, parse_turtle, parse_with_format};
+pub use parser::{
+    RdfFormat, detect_format, is_jsonld_document, parse_document, parse_turtle, parse_with_format,
+};
 pub use reason::{TypeFacts, apply_owl_rl, apply_rdfs, types_of};
 pub use shacl::validate_shacl;
 pub use validate::{

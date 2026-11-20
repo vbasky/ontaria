@@ -65,13 +65,23 @@ impl Server {
             .unwrap_or_else(|err| err.to_string())
     }
 
-    #[tool(description = "Validate a JSON instance document against the loaded ontology")]
+    #[tool(
+        description = "Validate a JSON or JSON-LD instance against the loaded ontology. JSON-LD is expanded first."
+    )]
     async fn validate(&self, Parameters(args): Parameters<ValidateArgs>) -> String {
-        let value = match serde_json::from_str::<serde_json::Value>(&args.json) {
-            Ok(value) => value,
-            Err(err) => return format!("invalid JSON: {err}"),
+        let bytes = args.json.as_bytes();
+        let report = if ontaria::is_jsonld_document(bytes) || ontaria::is_ebucore_instance(bytes) {
+            match ontaria::validate_rdf(&self.ontology, bytes, "http://ontaria.local/instance") {
+                Ok(report) => report,
+                Err(err) => return err.to_string(),
+            }
+        } else {
+            let value = match serde_json::from_str::<serde_json::Value>(&args.json) {
+                Ok(value) => value,
+                Err(err) => return format!("invalid JSON: {err}"),
+            };
+            ontaria::validate_json(&self.ontology, &value)
         };
-        let report = ontaria::validate_json(&self.ontology, &value);
         serde_json::to_string(&report).unwrap_or_else(|err| err.to_string())
     }
 

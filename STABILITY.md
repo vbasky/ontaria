@@ -1,6 +1,6 @@
 # Stability
 
-Ontaria 0.8.0 is a pre-1.0 release. The suggested 1.0 row in `ROADMAP.md` is a frozen public API. That freeze has not happened.
+Ontaria 0.9.0 is a pre-1.0 release. The suggested 1.0 row in `ROADMAP.md` is a frozen public API. That freeze has not happened.
 
 ## Versions
 
@@ -19,7 +19,7 @@ The CLI JSON envelope is part of the tool contract for this minor version: succe
 
 ## Rust
 
-The minimum supported Rust version is 1.88. That is the version in `rust-version` and the version CI builds. The crate uses edition 2024 and let chains, which stabilized in 1.88.
+The `ontaria` library's minimum supported Rust version is 1.88. That is the version in its `rust-version`. The crate uses edition 2024 and let chains, which stabilized in 1.88. The `ontaria` binary and the vendored `som` crate need Rust 1.89, and CI builds with 1.89.
 
 ## Features
 

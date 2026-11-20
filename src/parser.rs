@@ -1,9 +1,12 @@
 //! Turtle, N-Triples, N-Quads, TriG, RDF/XML, and JSON-LD to the class model.
 //!
 //! Each syntax is parsed to triples. Those triples are indexed once by
-//! subject, and extraction then walks that index.
+//! subject, and extraction then walks that index. A filesystem path is
+//! accepted as the base IRI. EBUCore XML and MediaInfo JSON are read here too.
 
+use std::borrow::Cow;
 use std::io::Read;
+use std::path::Path;
 
 use oxjsonld::{JsonLdLoadDocumentOptions, JsonLdParser, JsonLdRemoteDocument};
 use oxrdf::{GraphName, Quad, Triple};
@@ -67,14 +70,19 @@ impl RdfFormat {
 }
 
 /// Parse Turtle from any reader. `base_uri` resolves relative IRIs and is
-/// stored as the ontology URI.
+/// stored as the ontology URI. A filesystem path is stored as a `file://` IRI.
 pub fn parse_turtle(reader: impl Read, base_uri: &str) -> Result<Ontology> {
     let bytes = read_all(reader)?;
-    parse_turtle_bytes(&bytes, base_uri)
+    let base = normalize_base(base_uri);
+    parse_turtle_bytes(&bytes, base.as_ref())
 }
 
 /// Parse a document. The syntax is chosen from the bytes, after a leading
 /// byte-order mark and whitespace.
+///
+/// `base_uri` may be an absolute IRI or a filesystem path. A path is stored
+/// as a `file://` IRI. EBUCore XML and MediaInfo JSON are read as triples.
+/// Their format strings are `ebucore-xml` and `ebucore-json`.
 ///
 /// # Examples
 ///
@@ -92,15 +100,41 @@ pub fn parse_document(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
 }
 
 /// Parse `bytes` as `format`, ignoring the sniffer.
+///
+/// EBUCore XML is still recognized when `format` is [`RdfFormat::RdfXml`], and
+/// MediaInfo JSON when `format` is [`RdfFormat::JsonLd`]. A filesystem path
+/// passed as `base_uri` is stored as a `file://` IRI.
 pub fn parse_with_format(bytes: &[u8], base_uri: &str, format: RdfFormat) -> Result<Ontology> {
-    match format {
-        RdfFormat::Turtle => parse_turtle_bytes(bytes, base_uri),
-        RdfFormat::NTriples => parse_ntriples_bytes(bytes, base_uri),
-        RdfFormat::NQuads => parse_nquads_bytes(bytes, base_uri),
-        RdfFormat::TriG => parse_trig_bytes(bytes, base_uri),
-        RdfFormat::RdfXml => parse_rdfxml_bytes(bytes, base_uri),
-        RdfFormat::JsonLd => parse_jsonld_bytes(bytes, base_uri),
+    let base = normalize_base(base_uri);
+    let base = base.as_ref();
+    if format == RdfFormat::RdfXml && crate::ebucore::is_ebucore_xml(bytes) {
+        return crate::ebucore::parse_xml(bytes, base);
     }
+    if format == RdfFormat::JsonLd && crate::ebucore::is_mediainfo_json(bytes) {
+        return crate::ebucore::parse_json(bytes, base);
+    }
+    match format {
+        RdfFormat::Turtle => parse_turtle_bytes(bytes, base),
+        RdfFormat::NTriples => parse_ntriples_bytes(bytes, base),
+        RdfFormat::NQuads => parse_nquads_bytes(bytes, base),
+        RdfFormat::TriG => parse_trig_bytes(bytes, base),
+        RdfFormat::RdfXml => parse_rdfxml_bytes(bytes, base),
+        RdfFormat::JsonLd => parse_jsonld_bytes(bytes, base),
+    }
+}
+
+/// True when the top-level JSON value is a JSON-LD document.
+///
+/// An object or an array element counts when it has `@context` or `@graph`.
+pub fn is_jsonld_document(bytes: &[u8]) -> bool {
+    let rest = skip_bom_and_space(bytes);
+    if !(rest.starts_with(b"{") || rest.starts_with(b"[")) {
+        return false;
+    }
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+        return false;
+    };
+    jsonld_marker(&value)
 }
 
 pub fn detect_format(bytes: &[u8]) -> RdfFormat {
@@ -239,8 +273,11 @@ fn parse_rdfxml_bytes(bytes: &[u8], base_uri: &str) -> Result<Ontology> {
                 reason: err.to_string(),
             })?;
     }
+    // RDF/XML says xml:lang="" means the literal has no language. oxrdfxml
+    // rejects the empty tag before this crate can record the literal.
+    let sanitized = without_empty_xml_lang(bytes);
     let mut triples = Vec::new();
-    for triple in built.for_slice(bytes) {
+    for triple in built.for_slice(sanitized.as_ref()) {
         let triple = triple.map_err(|err| Error::parse(RdfFormat::RdfXml.as_str(), err))?;
         triples.push(InputTriple {
             triple,
@@ -307,8 +344,11 @@ fn load_jsonld_context(
     _options: &JsonLdLoadDocumentOptions,
 ) -> std::result::Result<JsonLdRemoteDocument, Box<dyn std::error::Error + Send + Sync>> {
     if schema_org_context(url) {
+        // The published schema.org context is `@vocab` `http://schema.org/` and
+        // does not coerce `@type`. This crate's schema IRIs use https, so the
+        // embedded context keeps that vocab and adds no datatype or `@id` overrides.
         return Ok(JsonLdRemoteDocument {
-            document: br#"{"@context":{"@vocab":"https://schema.org/","url":{"@type":"@id"},"mainEntityOfPage":{"@type":"@id"},"thumbnailUrl":{"@type":"@id"},"datePublished":{"@type":"http://www.w3.org/2001/XMLSchema#dateTime"},"dateModified":{"@type":"http://www.w3.org/2001/XMLSchema#dateTime"}}}"#.to_vec(),
+            document: br#"{"@context":{"@vocab":"https://schema.org/"}}"#.to_vec(),
             document_url: "https://schema.org/".to_string(),
         });
     }
@@ -318,7 +358,7 @@ fn load_jsonld_context(
     #[cfg(feature = "fetch")]
     {
         let mut response = ureq::get(url)
-            .header("User-Agent", "ontaria/0.8")
+            .header("User-Agent", "ontaria/0.9")
             .header("Accept", "application/ld+json, application/json")
             .call()
             .map_err(|err| -> Box<dyn std::error::Error + Send + Sync> {
@@ -353,6 +393,108 @@ fn schema_org_context(url: &str) -> bool {
             | "https://schema.org/docs/jsonldcontext.json"
             | "http://schema.org/docs/jsonldcontext.json"
     )
+}
+
+fn jsonld_marker(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.contains_key("@context") || map.contains_key("@graph")
+        }
+        serde_json::Value::Array(items) => items.iter().any(jsonld_marker),
+        _ => false,
+    }
+}
+
+/// An empty base stays empty. An absolute IRI is unchanged. Anything else is
+/// a filesystem path, including a Windows drive path such as `C:\vocab.ttl`.
+fn normalize_base(base: &str) -> Cow<'_, str> {
+    if base.is_empty() || has_iri_scheme(base) {
+        Cow::Borrowed(base)
+    } else {
+        Cow::Owned(path_to_file_iri(base))
+    }
+}
+
+fn has_iri_scheme(value: &str) -> bool {
+    let Some(colon) = value.find(':') else {
+        return false;
+    };
+    let scheme = &value[..colon];
+    let mut chars = scheme.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphabetic() {
+        return false;
+    }
+    if !chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')) {
+        return false;
+    }
+    if scheme.len() == 1 {
+        let rest = &value[colon + 1..];
+        if rest.starts_with(['\\', '/']) {
+            return false;
+        }
+    }
+    true
+}
+
+fn path_to_file_iri(path: &str) -> String {
+    let path = Path::new(path);
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|dir| dir.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    let text = absolute.to_string_lossy().replace('\\', "/");
+    if let Some(rest) = text.strip_prefix('/') {
+        format!("file:///{rest}")
+    } else {
+        format!("file:///{text}")
+    }
+}
+
+/// Drop `xml:lang=""` and `xml:lang=''`. A non-empty language tag is kept.
+fn without_empty_xml_lang(bytes: &[u8]) -> Cow<'_, [u8]> {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return Cow::Borrowed(bytes);
+    };
+    if !text.contains("xml:lang") {
+        return Cow::Borrowed(bytes);
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut changed = false;
+    while let Some(index) = rest.find("xml:lang") {
+        out.push_str(&rest[..index]);
+        let after = &rest[index + "xml:lang".len()..];
+        let trimmed = after.trim_start();
+        if let Some(stripped) = trimmed.strip_prefix('=') {
+            let trimmed = stripped.trim_start();
+            if let Some(quote) = trimmed.chars().next()
+                && (quote == '"' || quote == '\'')
+            {
+                let body = &trimmed[quote.len_utf8()..];
+                if let Some(end) = body.find(quote)
+                    && body[..end].trim().is_empty()
+                {
+                    rest = &body[end + quote.len_utf8()..];
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+        out.push_str("xml:lang");
+        rest = after;
+    }
+    out.push_str(rest);
+    if changed {
+        Cow::Owned(out.into_bytes())
+    } else {
+        Cow::Borrowed(bytes)
+    }
 }
 
 fn read_all(mut reader: impl Read) -> Result<Vec<u8>> {
@@ -481,7 +623,7 @@ fn count_terms(line: &str) -> usize {
     terms
 }
 
-fn xml_prefixes(bytes: &[u8]) -> Vec<(String, String)> {
+pub(crate) fn xml_prefixes(bytes: &[u8]) -> Vec<(String, String)> {
     let Ok(text) = std::str::from_utf8(bytes) else {
         return Vec::new();
     };
@@ -573,7 +715,7 @@ fn is_prefix_char(ch: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::PropertyType;
+    use crate::model::{PropertyType, TermKind};
 
     fn parse(ttl: &str) -> Ontology {
         parse_turtle(ttl.as_bytes(), "http://example.org/test").unwrap()
@@ -915,5 +1057,105 @@ ex:g { ex:Item a owl:Class ; rdfs:label "Item" . }
     fn rejects_broken_turtle() {
         let err = parse_turtle(&b"this is not turtle"[..], "http://example.org/").unwrap_err();
         assert!(matches!(err, Error::Parse { .. }));
+    }
+
+    #[test]
+    fn accepts_a_filesystem_path_as_the_base_iri() {
+        let ttl = br#"
+@prefix ex: <http://example.org/> .
+ex:Person a <http://www.w3.org/2002/07/owl#Class> .
+"#;
+        let ontology = parse_document(ttl, "/tmp/ontaria-person.ttl").unwrap();
+        assert!(ontology.uri.starts_with("file:///"));
+        assert!(ontology.get_class("Person").is_some());
+        let relative = parse_document(ttl, "ontaria-person.ttl").unwrap();
+        assert!(relative.uri.starts_with("file:///"));
+        let untouched = parse_document(ttl, "http://example.org/vocab").unwrap();
+        assert_eq!(untouched.uri, "http://example.org/vocab");
+    }
+
+    #[test]
+    fn schema_org_context_keeps_dates_urls_and_spellings() {
+        let doc = br#"{
+  "@context": "https://schema.org",
+  "@type": "NewsArticle",
+  "datePublished": "2015-09-20",
+  "image": "https://example.org/photo.jpg",
+  "wordcount": "10"
+}"#;
+        let ontology = parse_document(doc, "https://example.org/article").unwrap();
+        assert!(ontology.statements.iter().any(|statement| {
+            statement.predicate == "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
+                && statement.object == "https://schema.org/NewsArticle"
+        }));
+        let date = ontology
+            .statements
+            .iter()
+            .find(|statement| statement.predicate == "https://schema.org/datePublished")
+            .unwrap();
+        assert_eq!(date.object, "2015-09-20");
+        assert_eq!(date.kind, TermKind::Literal);
+        assert_ne!(
+            date.datatype.as_deref(),
+            Some("http://www.w3.org/2001/XMLSchema#dateTime")
+        );
+        let image = ontology
+            .statements
+            .iter()
+            .find(|statement| statement.predicate == "https://schema.org/image")
+            .unwrap();
+        assert_eq!(image.kind, TermKind::Literal);
+        assert_eq!(image.object, "https://example.org/photo.jpg");
+        assert!(ontology.statements.iter().any(|statement| {
+            statement.predicate == "https://schema.org/wordcount" && statement.object == "10"
+        }));
+        assert!(
+            ontology
+                .statements
+                .iter()
+                .all(|statement| statement.predicate != "https://schema.org/wordCount")
+        );
+    }
+
+    #[test]
+    fn empty_xml_lang_keeps_the_literal() {
+        let xml = br#"<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns:ebucore="http://www.ebu.ch/metadata/ontologies/ebucore/ebucore#">
+  <rdf:Description rdf:about="http://example.org/item">
+    <ebucore:title xml:lang="">Eurovision</ebucore:title>
+    <ebucore:title xml:lang="en">Final</ebucore:title>
+  </rdf:Description>
+</rdf:RDF>"#;
+        let ontology = parse_document(xml, "http://example.org/item").unwrap();
+        let bare = ontology
+            .statements
+            .iter()
+            .find(|statement| {
+                statement.predicate.ends_with("#title") && statement.object == "Eurovision"
+            })
+            .unwrap();
+        assert!(bare.language.is_none());
+        let english = ontology
+            .statements
+            .iter()
+            .find(|statement| {
+                statement.predicate.ends_with("#title") && statement.object == "Final"
+            })
+            .unwrap();
+        assert_eq!(english.language.as_deref(), Some("en"));
+    }
+
+    #[test]
+    fn jsonld_detection_ignores_plain_json_and_mediainfo() {
+        assert!(is_jsonld_document(
+            br#"{"@context":"https://schema.org","@type":"Article"}"#
+        ));
+        assert!(!is_jsonld_document(br#"{"name":"Ada"}"#));
+        assert!(!is_jsonld_document(
+            br##"{"ebucore:ebuCoreMain":{"ebucore:width":[{"#value":"1280"}]}}"##
+        ));
+        assert!(crate::ebucore::is_ebucore_instance(
+            br##"{"ebucore:ebuCoreMain":{"ebucore:width":[{"#value":"1280"}]}}"##
+        ));
     }
 }

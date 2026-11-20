@@ -17,7 +17,7 @@ Downloads use these defaults:
 - timeout: 30 seconds
 - maximum body size: 32 MiB
 - maximum redirects: 5
-- `User-Agent`: `ontaria/0.8`
+- `User-Agent`: `ontaria/0.9`
 
 A response over the size limit is `Error::Limit`. The HTTP server binds to `127.0.0.1:8080` unless you pass `--bind`.
 

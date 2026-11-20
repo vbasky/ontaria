@@ -15,6 +15,7 @@ use ontaria::{
 mod mcp;
 mod output;
 mod serve;
+mod som_cmd;
 
 use output::{print_error, print_success};
 
@@ -181,6 +182,11 @@ enum Command {
         #[command(subcommand)]
         command: MapCommand,
     },
+    /// Validate or decode a Story Object Model 1.0 message.
+    Som {
+        #[command(subcommand)]
+        command: SomCommand,
+    },
 }
 
 #[derive(Subcommand)]
@@ -193,6 +199,21 @@ enum CacheCommand {
         older_than: String,
     },
     Verify,
+}
+
+#[derive(Subcommand)]
+#[command(rename_all = "kebab-case")]
+enum SomCommand {
+    /// Validate a message with the upstream `som` crate.
+    Validate {
+        #[arg(value_name = "URL_OR_PATH")]
+        message: PathBuf,
+    },
+    /// Validate a message, then decode it with the upstream `som` crate.
+    Decode {
+        #[arg(value_name = "URL_OR_PATH")]
+        message: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -306,6 +327,9 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
         }
         Command::Reason { owl_rl } => return reason(&cli.ontology, &options, owl_rl),
         Command::Map { command } => return map_command(&cli.ontology, &options, command),
+        Command::Som { command } => {
+            return som_cmd::run(command, cli.offline, cli.cache_dir.as_deref());
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -595,7 +619,7 @@ fn validate(
         path: data.to_path_buf(),
         source,
     })?;
-    let mut report = if looks_like_json(&bytes) {
+    let mut report = if plain_json(&bytes) {
         let value: serde_json::Value = serde_json::from_slice(&bytes)
             .map_err(|err| ontaria::Error::message(format!("invalid JSON: {err}")))?;
         ontaria::validate_json(&ontology, &value)
@@ -608,7 +632,7 @@ fn validate(
             source,
         })?;
         let shape_ontology = ontaria::parse_document(&shape_bytes, &shapes.display().to_string())?;
-        let data_ontology = if looks_like_json(&bytes) {
+        let data_ontology = if plain_json(&bytes) {
             return Err(ontaria::Error::message(
                 "SHACL validation needs RDF instance data, not JSON",
             ));
@@ -818,6 +842,14 @@ fn looks_like_json(bytes: &[u8]) -> bool {
         bytes.iter().find(|byte| !byte.is_ascii_whitespace()),
         Some(b'{' | b'[')
     )
+}
+
+/// JSON that is not JSON-LD and not an EBUCore or MediaInfo instance.
+/// Those two are parsed to triples so `@context` and `#value` are kept.
+fn plain_json(bytes: &[u8]) -> bool {
+    looks_like_json(bytes)
+        && !ontaria::is_jsonld_document(bytes)
+        && !ontaria::is_ebucore_instance(bytes)
 }
 
 fn missing_err(kind: &str, name: &str) -> ontaria::Error {

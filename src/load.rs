@@ -339,7 +339,7 @@ pub async fn fetch_bytes(url: &str, limits: &FetchLimits) -> Result<Vec<u8>> {
         })?;
     let response = client
         .get(url)
-        .header("User-Agent", "ontaria/0.8")
+        .header("User-Agent", "ontaria/0.9")
         .send()
         .await
         .map_err(|err| Error::Fetch {

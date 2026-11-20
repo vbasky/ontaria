@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.0
+
+- `ontaria som validate` and `ontaria som decode` call the upstream Story Object Model 1.0 crate, vendored at `third_party/som` from `storyobjectmodel/som` `ff1e94a`. The argument is a local file or an `http`/`https` URL. The crate's own schemas, examples, and tests are unchanged.
+- The `ontaria` binary needs Rust 1.89. CI builds with 1.89. The library `rust-version` stays 1.88.
+- A filesystem path is a valid base IRI. `parse_document` and `validate` store it as a `file://` IRI, so Turtle, TriG, RDF/XML, and JSON-LD parse from other crates and from the CLI.
+- The embedded schema.org context is `@vocab` `https://schema.org/` only. Dates and URL strings stay literals. `wordcount` is not rewritten to `wordCount`.
+- RDF/XML with `xml:lang=""` keeps the literal and drops the empty language tag.
+- EBUCore XML and MediaInfo JSON parse to triples. Text and `#value` are kept. The XML namespace `urn:ebu:metadata-schema:ebucore` maps to the EBUCore ontology IRI. Element names are not rewritten to the MediaInfo RDF names.
+- `validate` and the MCP `validate` tool expand JSON-LD (`@context` or `@graph`) before checking.
+
 ## 0.8.0
 
 - A YAML mapping names a subject, a type, and source paths. `map validate` checks those terms. `map apply` writes JSON-LD, including an optional PROV-O derivation. `map reverse` reads that JSON-LD back into the source shape.
