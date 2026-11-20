@@ -2,271 +2,43 @@
 //! arguments and prints the JSON envelope.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser};
 use ontaria::{
     CacheManager, Class, FetchLimits, LangPref, LoadOptions, Ontology, Property, SearchResults,
     Warning, existing_file, file_url, is_remote, parse_age,
 };
 
+mod cli;
 #[cfg(feature = "mcp")]
 mod mcp;
 mod output;
 mod serve;
 mod som_cmd;
 
+use cli::{
+    Build, CacheCommand, Check, Cli, GenTarget, Host, Kind, LoadFlags, Lookup, MapCommand, Store,
+    Story,
+};
 use output::{print_error, print_success};
-
-#[derive(Parser)]
-#[command(
-    name = "ontaria",
-    version,
-    about = "Look up, validate, diff, and serve an RDF Schema or OWL ontology"
-)]
-struct Cli {
-    /// Ontology URL, or a path to a local file.
-    /// When omitted, the only cached ontology is used.
-    #[arg(short = 'o', long, global = true, value_name = "URL_OR_PATH")]
-    ontology: Option<String>,
-
-    /// Follow owl:imports while loading.
-    #[arg(long, global = true)]
-    imports: bool,
-
-    /// Cache directory. Overrides ONTARIA_CACHE_DIR.
-    #[arg(long, global = true, value_name = "DIR")]
-    cache_dir: Option<PathBuf>,
-
-    /// Offline catalog (TOML or OASIS XML) mapping import IRIs to local files.
-    #[arg(long, global = true, value_name = "FILE")]
-    catalog: Option<PathBuf>,
-
-    /// Preferred language tags, most preferred first, separated by commas.
-    #[arg(long, global = true, value_name = "TAGS")]
-    lang: Option<String>,
-
-    /// Fail when a cached file does not match the lock file.
-    #[arg(long, global = true)]
-    locked: bool,
-
-    /// Lock file to read or write. Defaults to ontaria.lock.json with --locked.
-    #[arg(long, global = true, value_name = "FILE")]
-    lock: Option<PathBuf>,
-
-    /// Do not use the network. A missing cache entry is an error.
-    #[arg(long, global = true)]
-    offline: bool,
-
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Clone, Copy, ValueEnum)]
-enum Kind {
-    Class,
-    Property,
-}
-
-#[derive(Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum Command {
-    /// Download and cache an ontology. A local file path is cached too.
-    Fetch {
-        #[arg(value_name = "URL_OR_PATH")]
-        url: String,
-        /// Revalidate with ETag and Last-Modified when the cache already has the URL.
-        #[arg(long)]
-        refresh: bool,
-    },
-    /// List cached ontologies.
-    ListCached,
-    /// Cache maintenance.
-    Cache {
-        #[command(subcommand)]
-        command: CacheCommand,
-    },
-    GetClass {
-        #[arg(value_name = "TERM")]
-        term: String,
-        #[arg(long)]
-        inherited: bool,
-    },
-    GetProperty {
-        #[arg(value_name = "TERM")]
-        term: String,
-        #[arg(long)]
-        usage: bool,
-    },
-    GetParents {
-        #[arg(value_name = "TERM")]
-        term: String,
-    },
-    GetChildren {
-        #[arg(value_name = "TERM")]
-        term: String,
-    },
-    Search {
-        #[arg(value_name = "QUERY")]
-        query: String,
-        #[arg(long, value_enum, value_name = "KIND")]
-        kind: Option<Kind>,
-    },
-    ListNamespaces,
-    ListImports,
-    Resources,
-    ListClassProperties {
-        #[arg(value_name = "TERM")]
-        term: String,
-    },
-    BatchGetClass {
-        #[arg(value_name = "TERM", required = true)]
-        terms: Vec<String>,
-    },
-    BatchGetProperty {
-        #[arg(value_name = "TERM", required = true)]
-        terms: Vec<String>,
-    },
-    BatchSearch {
-        #[arg(value_name = "QUERY", required = true)]
-        queries: Vec<String>,
-        #[arg(long, value_enum, value_name = "KIND")]
-        kind: Option<Kind>,
-    },
-    /// Validate instance data against the loaded ontology.
-    Validate {
-        #[arg(value_name = "DATA")]
-        data: PathBuf,
-        /// SHACL shapes file. Requires the `shacl` feature.
-        #[arg(long, value_name = "SHAPES")]
-        shacl: Option<PathBuf>,
-        /// Print a Turtle ValidationReport instead of the JSON envelope.
-        #[arg(long)]
-        turtle: bool,
-    },
-    /// Generate a context, bindings, schema, shapes, or docs.
-    Gen {
-        #[command(subcommand)]
-        target: GenTarget,
-    },
-    /// Compare two ontology files.
-    Diff {
-        before: PathBuf,
-        after: PathBuf,
-        /// Exit 1 when the value is `breaking`.
-        #[arg(long, value_name = "breaking")]
-        fail_on: Option<String>,
-    },
-    /// Lint an ontology.
-    Lint {
-        /// Exit 1 on warnings when the value is `warnings`.
-        #[arg(long, value_name = "warnings")]
-        deny: Option<String>,
-    },
-    /// Serve lookup, search, validate, and diff over MCP stdio.
-    #[cfg(feature = "mcp")]
-    Mcp,
-    /// Read-only HTTP API.
-    Serve {
-        #[arg(long, default_value = "127.0.0.1:8080")]
-        bind: String,
-    },
-    /// Materialize RDFS entailments, or OWL 2 RL with --owl-rl.
-    Reason {
-        #[arg(long)]
-        owl_rl: bool,
-    },
-    /// Check, apply, or reverse a YAML mapping.
-    Map {
-        #[command(subcommand)]
-        command: MapCommand,
-    },
-    /// Validate or decode a Story Object Model 1.0 message.
-    Som {
-        #[command(subcommand)]
-        command: SomCommand,
-    },
-}
-
-#[derive(Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum CacheCommand {
-    List,
-    /// Delete entries older than a duration such as 30d, 12h, or 15m.
-    Prune {
-        #[arg(long, value_name = "DURATION")]
-        older_than: String,
-    },
-    Verify,
-}
-
-#[derive(Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum SomCommand {
-    /// Validate a message with the upstream `som` crate.
-    Validate {
-        #[arg(value_name = "URL_OR_PATH")]
-        message: PathBuf,
-    },
-    /// Validate a message, then decode it with the upstream `som` crate.
-    Decode {
-        #[arg(value_name = "URL_OR_PATH")]
-        message: PathBuf,
-    },
-}
-
-#[derive(Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum MapCommand {
-    Validate { mapping: PathBuf },
-    Apply { mapping: PathBuf, input: PathBuf },
-    Reverse { mapping: PathBuf, input: PathBuf },
-}
-
-#[derive(Subcommand)]
-#[command(rename_all = "kebab-case")]
-enum GenTarget {
-    Context {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Rust {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Typescript {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Go {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Python {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    JsonSchema {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Shacl {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Pg {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-    Docs {
-        #[arg(long)]
-        out: Option<PathBuf>,
-    },
-}
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
+    if cli.command.is_none() && cli.paths.is_empty() && !LoadFlags::from(cli.load.clone()).any() {
+        let _ = Cli::command().print_help();
+        println!();
+        return ExitCode::SUCCESS;
+    }
+    if let Some(path) = &cli.log_file
+        && let Err(err) = output::set_log_file(path)
+    {
+        if print_error(err.to_string()).is_err() {
+            eprintln!("{err}");
+        }
+        return ExitCode::from(1);
+    }
     match dispatch(cli) {
         Ok(code) => code,
         Err(err) => {
@@ -279,63 +51,339 @@ fn main() -> ExitCode {
 }
 
 fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
-    let options = options_from(&cli);
+    let root = LoadFlags::from(cli.load);
+    let paths = cli.paths;
     match cli.command {
-        Command::Fetch { url, refresh } => fetch(&options, &url, cli.offline, refresh)?,
-        Command::ListCached => list_cached(&options)?,
-        Command::Cache { command } => return cache_command(&options, command),
-        Command::GetClass { term, inherited } => {
-            get_class(&cli.ontology, &term, inherited, &options)?
-        }
-        Command::GetProperty { term, usage } => {
-            get_property(&cli.ontology, &term, usage, &options)?
-        }
-        Command::GetParents { term } => parents(&cli.ontology, &term, &options)?,
-        Command::GetChildren { term } => children(&cli.ontology, &term, &options)?,
-        Command::Search { query, kind } => search(&cli.ontology, &query, kind, &options)?,
-        Command::ListNamespaces => namespaces(&cli.ontology, &options)?,
-        Command::ListImports => imports_of(&cli.ontology, &options)?,
-        Command::Resources => resources(&cli.ontology, &options)?,
-        Command::ListClassProperties { term } => class_properties(&cli.ontology, &term, &options)?,
-        Command::BatchGetClass { terms } => batch_classes(&cli.ontology, &terms, &options)?,
-        Command::BatchGetProperty { terms } => batch_properties(&cli.ontology, &terms, &options)?,
-        Command::BatchSearch { queries, kind } => {
-            batch_search(&cli.ontology, &queries, kind, &options)?
-        }
-        Command::Validate {
-            data,
-            shacl,
-            turtle,
-        } => {
-            return validate(&cli.ontology, &options, &data, shacl.as_deref(), turtle);
-        }
-        Command::Gen { target } => generate(&cli.ontology, &options, target)?,
-        Command::Diff {
-            before,
-            after,
-            fail_on,
-        } => return diff_files(&before, &after, fail_on.as_deref()),
-        Command::Lint { deny } => return lint_file(&cli.ontology, &options, deny.as_deref()),
-        #[cfg(feature = "mcp")]
-        Command::Mcp => {
-            let (ontology, _) = ontology_for(&cli.ontology, &options)?;
-            return mcp::serve(ontology);
-        }
-        Command::Serve { bind } => {
-            let (ontology, _) = ontology_for(&cli.ontology, &options)?;
-            return serve::serve(ontology, &bind);
-        }
-        Command::Reason { owl_rl } => return reason(&cli.ontology, &options, owl_rl),
-        Command::Map { command } => return map_command(&cli.ontology, &options, command),
-        Command::Som { command } => {
-            return som_cmd::run(command, cli.offline, cli.cache_dir.as_deref());
+        None => return describe_paths(&paths, &root),
+        Some(cli::Command::Lookup(command)) => lookup(&paths, &root, command)?,
+        Some(cli::Command::Check(command)) => return check(&paths, &root, command),
+        Some(cli::Command::Build(command)) => return build(&paths, &root, command),
+        Some(cli::Command::Store(command)) => return store(&paths, &root, command),
+        Some(cli::Command::Host(command)) => return host(&paths, &root, command),
+        Some(cli::Command::Story(Story::Som { cache, command })) => {
+            let flags = cache_invocation("som", &paths, &root, cache.into())?;
+            return som_cmd::run(command, flags.offline, flags.cache_dir.as_deref());
         }
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn options_from(cli: &Cli) -> LoadOptions {
-    let tags = cli
+fn lookup(paths: &[String], root: &LoadFlags, command: Lookup) -> ontaria::Result<()> {
+    match command {
+        Lookup::GetClass {
+            term,
+            inherited,
+            load,
+        } => {
+            let (ontology, options) = ontology_invocation("get-class", paths, root, load.into())?;
+            get_class(&ontology, &term, inherited, &options)
+        }
+        Lookup::GetProperty { term, usage, load } => {
+            let (ontology, options) =
+                ontology_invocation("get-property", paths, root, load.into())?;
+            get_property(&ontology, &term, usage, &options)
+        }
+        Lookup::GetParents { term, load } => {
+            let (ontology, options) = ontology_invocation("get-parents", paths, root, load.into())?;
+            parents(&ontology, &term, &options)
+        }
+        Lookup::GetChildren { term, load } => {
+            let (ontology, options) =
+                ontology_invocation("get-children", paths, root, load.into())?;
+            children(&ontology, &term, &options)
+        }
+        Lookup::Search { query, kind, load } => {
+            let (ontology, options) = ontology_invocation("search", paths, root, load.into())?;
+            search(&ontology, &query, kind, &options)
+        }
+        Lookup::ListNamespaces { load } => {
+            let (ontology, options) =
+                ontology_invocation("list-namespaces", paths, root, load.into())?;
+            namespaces(&ontology, &options)
+        }
+        Lookup::ListImports { load } => {
+            let (ontology, options) =
+                ontology_invocation("list-imports", paths, root, load.into())?;
+            imports_of(&ontology, &options)
+        }
+        Lookup::Resources { load } => {
+            let (ontology, options) = ontology_invocation("resources", paths, root, load.into())?;
+            resources(&ontology, &options)
+        }
+        Lookup::ListClassProperties { term, load } => {
+            let (ontology, options) =
+                ontology_invocation("list-class-properties", paths, root, load.into())?;
+            class_properties(&ontology, &term, &options)
+        }
+        Lookup::BatchGetClass { terms, load } => {
+            let (ontology, options) =
+                ontology_invocation("batch-get-class", paths, root, load.into())?;
+            batch_classes(&ontology, &terms, &options)
+        }
+        Lookup::BatchGetProperty { terms, load } => {
+            let (ontology, options) =
+                ontology_invocation("batch-get-property", paths, root, load.into())?;
+            batch_properties(&ontology, &terms, &options)
+        }
+        Lookup::BatchSearch {
+            queries,
+            kind,
+            load,
+        } => {
+            let (ontology, options) =
+                ontology_invocation("batch-search", paths, root, load.into())?;
+            batch_search(&ontology, &queries, kind, &options)
+        }
+    }
+}
+
+fn check(paths: &[String], root: &LoadFlags, command: Check) -> ontaria::Result<ExitCode> {
+    match command {
+        Check::Validate {
+            data,
+            shacl,
+            turtle,
+            load,
+        } => {
+            let (ontology, options) = ontology_invocation("validate", paths, root, load.into())?;
+            validate(&ontology, &options, &data, shacl.as_deref(), turtle)
+        }
+        Check::Lint { deny, load } => {
+            let (ontology, options) = ontology_invocation("lint", paths, root, load.into())?;
+            lint_file(&ontology, &options, deny.as_deref())
+        }
+        Check::Diff {
+            before,
+            after,
+            fail_on,
+        } => {
+            reject_ontology("diff", paths, root)?;
+            diff_files(&before, &after, fail_on.as_deref())
+        }
+        Check::Reason { owl_rl, load } => {
+            let (ontology, options) = ontology_invocation("reason", paths, root, load.into())?;
+            reason(&ontology, &options, owl_rl)
+        }
+    }
+}
+
+fn build(paths: &[String], root: &LoadFlags, command: Build) -> ontaria::Result<ExitCode> {
+    match command {
+        Build::Gen { load, target } => {
+            let (ontology, options) = ontology_invocation("gen", paths, root, load.into())?;
+            generate(&ontology, &options, target)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Build::Map { command } => map_dispatch(paths, root, command),
+    }
+}
+
+fn store(paths: &[String], root: &LoadFlags, command: Store) -> ontaria::Result<ExitCode> {
+    match command {
+        Store::Fetch {
+            url,
+            refresh,
+            cache,
+        } => {
+            let flags = cache_invocation("fetch", paths, root, cache.into())?;
+            fetch(&options_from(&flags), &url, flags.offline, refresh)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Store::Cache { cache, command } => {
+            let flags = cache_invocation("cache", paths, root, cache.into())?;
+            cache_command(&options_from(&flags), command)
+        }
+        Store::ListCached { cache } => {
+            let flags = cache_invocation("list-cached", paths, root, cache.into())?;
+            list_cached(&options_from(&flags))?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn host(paths: &[String], root: &LoadFlags, command: Host) -> ontaria::Result<ExitCode> {
+    match command {
+        Host::Serve { bind, load } => {
+            let (ontology, options) = ontology_invocation("serve", paths, root, load.into())?;
+            let (loaded, _) = ontology_for(&ontology, &options)?;
+            serve::serve(loaded, &bind)
+        }
+        #[cfg(feature = "mcp")]
+        Host::Mcp { load } => {
+            let (ontology, options) = ontology_invocation("mcp", paths, root, load.into())?;
+            let (loaded, _) = ontology_for(&ontology, &options)?;
+            mcp::serve(loaded)
+        }
+    }
+}
+
+fn map_dispatch(
+    paths: &[String],
+    root: &LoadFlags,
+    command: MapCommand,
+) -> ontaria::Result<ExitCode> {
+    match command {
+        MapCommand::Validate { mapping, load } => {
+            let (ontology, options) =
+                ontology_invocation("map validate", paths, root, load.into())?;
+            map_validate(&ontology, &options, &mapping)
+        }
+        MapCommand::Apply { mapping, input } => {
+            reject_ontology("map apply", paths, root)?;
+            let mapping = read_mapping(&mapping)?;
+            let value = read_json(&input)?;
+            print_success(ontaria::apply(&mapping, &value)?, &[])?;
+            Ok(ExitCode::SUCCESS)
+        }
+        MapCommand::Reverse { mapping, input } => {
+            reject_ontology("map reverse", paths, root)?;
+            let mapping = read_mapping(&mapping)?;
+            let value = read_json(&input)?;
+            print_success(ontaria::reverse(&mapping, &value)?, &[])?;
+            Ok(ExitCode::SUCCESS)
+        }
+    }
+}
+
+fn ontology_invocation(
+    command: &str,
+    patterns: &[String],
+    root: &LoadFlags,
+    child: LoadFlags,
+) -> ontaria::Result<(Option<String>, LoadOptions)> {
+    let flags = merge_flags(root, &child)?;
+    let paths = expanded_paths(patterns)?;
+    let spec = match (paths.len(), flags.ontology.clone()) {
+        (0, spec) => spec,
+        (1, None) => paths.into_iter().next(),
+        (1, Some(spec)) if same_input(&paths[0], &spec) => Some(spec),
+        (_, Some(_)) => {
+            return Err(ontaria::Error::message(
+                "PATH and --ontology name different files",
+            ));
+        }
+        _ => {
+            return Err(ontaria::Error::message(format!(
+                "{command} takes one ontology PATH"
+            )));
+        }
+    };
+    Ok((spec, options_from(&flags)))
+}
+
+fn cache_invocation(
+    command: &str,
+    patterns: &[String],
+    root: &LoadFlags,
+    child: LoadFlags,
+) -> ontaria::Result<LoadFlags> {
+    if !patterns.is_empty() || root.ontology_only() || child.ontology_only() {
+        return Err(ontaria::Error::message(format!(
+            "{command} does not take ontology options"
+        )));
+    }
+    merge_flags(root, &child)
+}
+
+fn reject_ontology(command: &str, patterns: &[String], root: &LoadFlags) -> ontaria::Result<()> {
+    if patterns.is_empty() && !root.any() {
+        return Ok(());
+    }
+    Err(ontaria::Error::message(format!(
+        "{command} does not take ontology options"
+    )))
+}
+
+fn merge_flags(root: &LoadFlags, child: &LoadFlags) -> ontaria::Result<LoadFlags> {
+    Ok(LoadFlags {
+        ontology: merge_value(root.ontology.clone(), child.ontology.clone(), "--ontology")?,
+        imports: root.imports || child.imports,
+        cache_dir: merge_value(
+            root.cache_dir.clone(),
+            child.cache_dir.clone(),
+            "--cache-dir",
+        )?,
+        catalog: merge_value(root.catalog.clone(), child.catalog.clone(), "--catalog")?,
+        lang: merge_value(root.lang.clone(), child.lang.clone(), "--lang")?,
+        locked: root.locked || child.locked,
+        lock: merge_value(root.lock.clone(), child.lock.clone(), "--lock")?,
+        offline: root.offline || child.offline,
+    })
+}
+
+fn merge_value<T: Clone + PartialEq>(
+    left: Option<T>,
+    right: Option<T>,
+    flag: &str,
+) -> ontaria::Result<Option<T>> {
+    match (left, right) {
+        (Some(left), Some(right)) if left != right => Err(ontaria::Error::message(format!(
+            "{flag} is set twice with different values"
+        ))),
+        (Some(left), _) => Ok(Some(left)),
+        (None, right) => Ok(right),
+    }
+}
+
+fn expanded_paths(patterns: &[String]) -> ontaria::Result<Vec<String>> {
+    let paths = cli::expand_paths(patterns);
+    if !patterns.is_empty() && paths.is_empty() {
+        return Err(ontaria::Error::message(format!(
+            "no files matched: {}",
+            patterns.join(", ")
+        )));
+    }
+    Ok(paths)
+}
+
+fn same_input(left: &str, right: &str) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn describe_paths(patterns: &[String], flags: &LoadFlags) -> ontaria::Result<ExitCode> {
+    let mut inputs = expanded_paths(patterns)?;
+    if let Some(spec) = &flags.ontology
+        && !inputs.iter().any(|path| same_input(path, spec))
+    {
+        inputs.insert(0, spec.clone());
+    }
+    if inputs.is_empty() {
+        return Err(ontaria::Error::message(format!(
+            "no files matched: {}",
+            patterns.join(", ")
+        )));
+    }
+    let options = options_from(flags);
+    let mut rows = Vec::new();
+    let mut warnings = Vec::new();
+    for path in inputs {
+        let ontology = Ontology::load(&path, &options)?;
+        warnings.extend(ontology.warnings.clone());
+        rows.push(serde_json::json!({
+            "path": path,
+            "format": ontology.format,
+            "classes": ontology.classes.len(),
+            "properties": ontology.properties.len(),
+            "namespaces": ontology.namespaces.len(),
+        }));
+    }
+    let data = if rows.len() == 1 {
+        rows.pop().unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Array(rows)
+    };
+    print_success(&data, &warnings)?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn options_from(flags: &LoadFlags) -> LoadOptions {
+    let tags = flags
         .lang
         .as_deref()
         .unwrap_or("")
@@ -344,16 +392,16 @@ fn options_from(cli: &Cli) -> LoadOptions {
         .filter(|tag| !tag.is_empty())
         .map(str::to_string);
     LoadOptions {
-        follow_imports: cli.imports,
-        cache_dir: cli.cache_dir.clone(),
-        catalog_path: cli.catalog.clone(),
-        lang: if cli.lang.is_some() {
+        follow_imports: flags.imports,
+        cache_dir: flags.cache_dir.clone(),
+        catalog_path: flags.catalog.clone(),
+        lang: if flags.lang.is_some() {
             LangPref::new(tags)
         } else {
             LangPref::default()
         },
-        locked: cli.locked,
-        lock_path: cli.lock.clone(),
+        locked: flags.locked,
+        lock_path: flags.lock.clone(),
         allow_network: false,
         ..LoadOptions::default()
     }
@@ -779,37 +827,21 @@ fn reason(spec: &Option<String>, options: &LoadOptions, owl_rl: bool) -> ontaria
     Ok(ExitCode::SUCCESS)
 }
 
-fn map_command(
+fn map_validate(
     spec: &Option<String>,
     options: &LoadOptions,
-    command: MapCommand,
+    mapping: &Path,
 ) -> ontaria::Result<ExitCode> {
-    match command {
-        MapCommand::Validate { mapping } => {
-            let (ontology, warnings) = ontology_for(spec, options)?;
-            let mapping = read_mapping(&mapping)?;
-            let report = ontaria::validate_mapping(&ontology, &mapping);
-            let fail = report.has_errors();
-            print_success(&report, &warnings)?;
-            Ok(if fail {
-                ExitCode::from(1)
-            } else {
-                ExitCode::SUCCESS
-            })
-        }
-        MapCommand::Apply { mapping, input } => {
-            let mapping = read_mapping(&mapping)?;
-            let value = read_json(&input)?;
-            print_success(ontaria::apply(&mapping, &value)?, &[])?;
-            Ok(ExitCode::SUCCESS)
-        }
-        MapCommand::Reverse { mapping, input } => {
-            let mapping = read_mapping(&mapping)?;
-            let value = read_json(&input)?;
-            print_success(ontaria::reverse(&mapping, &value)?, &[])?;
-            Ok(ExitCode::SUCCESS)
-        }
-    }
+    let (ontology, warnings) = ontology_for(spec, options)?;
+    let mapping = read_mapping(mapping)?;
+    let report = ontaria::validate_mapping(&ontology, &mapping);
+    let fail = report.has_errors();
+    print_success(&report, &warnings)?;
+    Ok(if fail {
+        ExitCode::from(1)
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn read_mapping(path: &Path) -> ontaria::Result<ontaria::Mapping> {

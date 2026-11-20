@@ -13,13 +13,18 @@ categories = ["parser-implementations"]
 [workspace]
 members = [
     ".",
-    "ontaria-cli",
+    "crates/ontaria-cli",
     "ontaria-macros",
     "ontaria-wasm",
     "ontaria-python",
     "third_party/som/implementations/rust",
 ]
 resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/vbasky/ontaria"
 
 [features]
 default = ["fetch"]

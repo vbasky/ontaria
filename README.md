@@ -9,7 +9,9 @@ Version 0.9.0 adds Story Object Model checks and EBUCore instance documents. The
 ## Install
 
 ```bash
-cargo install --path ontaria-cli
+cargo install --path crates/ontaria-cli
+# or, without a checkout:
+# cargo install --git https://github.com/vbasky/ontaria ontaria-cli
 # binary: ontaria
 ```
 
@@ -56,8 +58,11 @@ Each entry is `{sha256}.{ext}` plus `{sha256}.meta.json`. `fetch` stores a URL o
 ## Commands
 
 ```bash
+ontaria <PATH>...
+ontaria <PATH> --log-file <FILE>
+ontaria <PATH> get-class <TERM>
+
 ontaria fetch <URL_OR_PATH> [--refresh]
-ontaria list-cached
 ontaria cache list|prune --older-than <DURATION>|verify
 
 ontaria --ontology <URL_OR_PATH> [--imports] get-class <TERM> [--inherited]
@@ -87,9 +92,11 @@ ontaria --ontology <URL_OR_PATH> serve [--bind 127.0.0.1:8080]
 ontaria --ontology <URL_OR_PATH> mcp
 ```
 
-`-o` is `--ontology`. A term may be an IRI, `prefix:Local`, a local name, or a label. `--lang` is a comma-separated preference list. The default label is language-less, then English, then the first value.
+`-o` is `--ontology`. A single positional path names that same ontology. A term may be an IRI, `prefix:Local`, a local name, or a label. `--lang` is a comma-separated preference list. The default label is language-less, then English, then the first value.
 
-Global flags: `--imports`, `--cache-dir`, `--catalog`, `--lang`, `--locked`, `--lock`, `--offline`.
+With no path and no command, `ontaria` prints help and exits 0. A path with no command loads the file and prints a summary. Quote a glob so the shell does not expand it. `--log-file FILE` writes the JSON envelope to that file. The report is JSON.
+
+Ontology flags apply to lookup, `validate`, `lint`, `reason`, `gen`, `map validate`, `serve`, and `mcp`. `--cache-dir` and `--offline` also apply to `fetch`, `cache`, and `som`. `diff` does not take an ontology. `list-cached` is a hidden alias of `cache list`.
 
 Every success response is JSON:
 

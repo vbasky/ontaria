@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `ontaria-cli` lives at `crates/ontaria-cli`. The binary crate has `src/cli.rs`, `src/banner.txt`, and its own README, and it inherits edition, license, and repository from the workspace.
+- With no path and no subcommand, `ontaria` prints help and exits 0.
+- Help splits arguments into Input, Output, and Ontology. A positional `PATH` summarizes each file when no command is given. A glob expands to matching files.
+- Ontology flags (`-o`, `--imports`, `--catalog`, `--lang`, `--locked`, `--lock`) belong to the commands that load an ontology. `--cache-dir` and `--offline` also belong to `fetch`, `cache`, and `som`. `diff`, `map apply`, and `map reverse` do not take them. `--log-file` is the output flag for every command.
+- One `PATH` and `-o` name the same ontology. When both are present they must name the same file. `list-cached` remains available and is hidden from help; `cache list` is the listed command.
+
 ## 0.9.0
 
 - `ontaria som validate` and `ontaria som decode` call the upstream Story Object Model 1.0 crate, vendored at `third_party/som` from `storyobjectmodel/som` `ff1e94a`. The argument is a local file or an `http`/`https` URL. The crate's own schemas, examples, and tests are unchanged.

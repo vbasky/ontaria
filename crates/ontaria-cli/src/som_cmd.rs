@@ -8,7 +8,7 @@ use som::Family as SomFamily;
 use som::model::{Payload, decode_message};
 use som::validate::{Outcome, Validator};
 
-use super::SomCommand;
+use crate::cli::SomCommand;
 use crate::output::{print_error, print_success};
 
 pub fn run(

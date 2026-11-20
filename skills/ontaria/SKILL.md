@@ -7,7 +7,11 @@ description: Look up, validate, diff, lint, and generate from an RDF Schema or O
 
 Use the `ontaria` binary. It prints one JSON object to stdout. Success is `{"status":"ok","data":...,"warnings":[...]}`. Failure is `{"status":"error","message":"..."}` and the process exits 1. Warnings are objects with `code` and `message`. Logs from `serve` and `mcp` go to stderr.
 
-A term is an IRI, `prefix:Local`, a local name, or a label. Pass the ontology with `-o` or `--ontology`. Query commands never download. Run `fetch` first for a remote ontology.
+A term is an IRI, `prefix:Local`, a local name, or a label. Pass the ontology with `-o` / `--ontology`, or as one positional path. Query commands never download. Run `fetch` first for a remote ontology.
+
+`ontaria` with no path and no command prints help and exits 0. `ontaria ./vocab.ttl` loads that file and prints a JSON summary (`format`, `classes`, `properties`, `namespaces`). Several paths, or a quoted glob, return an array. `--log-file FILE` writes the envelope to that file instead of stdout. The report is JSON.
+
+Ontology flags (`-o`, `--imports`, `--catalog`, `--lang`, `--locked`, `--lock`) belong to lookup, `validate`, `lint`, `reason`, `gen`, `map validate`, `serve`, and `mcp`. They are accepted before the command and on that command's help. `--cache-dir` and `--offline` also belong to `fetch`, `cache`, and `som`. `diff`, `map apply`, and `map reverse` do not take an ontology. `cache list` lists the cache. `list-cached` is a hidden alias.
 
 ## Lookup
 
