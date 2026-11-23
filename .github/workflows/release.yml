@@ -68,7 +68,7 @@ jobs:
           rustup target add ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release -p ontaria-cli --target ${{ matrix.target }}
+        run: cargo build --release -p ontaria-cli --features som --target ${{ matrix.target }}
 
       - name: Archive (Unix)
         if: runner.os != 'Windows'
@@ -188,10 +188,23 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          # ontaria-macros must be on crates.io before ontaria. The CLI is publish = false.
+          # ontaria-macros must be on crates.io before ontaria, and ontaria before the CLI.
+          # The vendored som crate is not published. Drop that optional path
+          # dependency so the crates.io package can be installed without it.
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("crates/ontaria-cli/Cargo.toml")
+          kept = []
+          for line in path.read_text().splitlines(keepends=True):
+              if line.startswith("som = ") or "Story Object Model 1.0 commands" in line or line.startswith("## repository and is not on crates.io"):
+                  continue
+              kept.append(line)
+          path.write_text("".join(kept))
+          PY
           CRATES=(
             ontaria-macros
             ontaria
+            ontaria-cli
           )
           metadata=$(cargo metadata --format-version 1 --no-deps)
           macros_version=$(jq -r '.packages[] | select(.name == "ontaria-macros") | .version' <<<"$metadata")

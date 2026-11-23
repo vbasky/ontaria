@@ -1,30 +1,29 @@
 # ontaria-cli
 
-![ontaria — look up any term in an ontology](../../docs/banner.png)
+![ontaria — look up any term in an ontology](https://raw.githubusercontent.com/vbasky/ontaria/main/docs/banner.png)
 
 Look up, validate, diff, and generate from an RDF Schema or OWL ontology.
 The binary is named `ontaria`. The library crate is [`ontaria`](../../README.md) at `crates/ontaria`. From the repository root, `cargo run --bin ontaria` builds it.
 
 ## Install
 
-From a checkout of this repository:
-
 ```sh
-cargo install --path crates/ontaria-cli
+cargo install ontaria-cli
 ```
 
-From Git, without a checkout:
+The binary is named `ontaria`. It needs Rust 1.89. This install does not
+include `som validate` or `som decode`. The Story Object Model crate is
+vendored at `third_party/som` and is not on crates.io. Build those commands
+with the `som` feature:
 
 ```sh
-cargo install --git https://github.com/vbasky/ontaria ontaria-cli
+cargo install --path crates/ontaria-cli --features som
+cargo install --git https://github.com/vbasky/ontaria ontaria-cli --features som
 ```
-
-The binary needs Rust 1.89. This package is not published to crates.io. It
-depends on the Story Object Model crate vendored at `third_party/som`, and
-that crate is not published either.
 
 Running `ontaria` with no path and no subcommand prints the help banner and
-exits 0.
+exits 0. The usage lines are `ontaria [OPTIONS] [PATH]...` and
+`ontaria <COMMAND>`. A path before a command still names the ontology.
 
 ## Quick start
 

@@ -159,6 +159,7 @@ pub(crate) enum Command {
     Store(Store),
     #[command(flatten)]
     Host(Host),
+    #[cfg(feature = "som")]
     #[command(flatten)]
     Story(Story),
 }
@@ -364,6 +365,7 @@ pub(crate) enum Host {
     },
 }
 
+#[cfg(feature = "som")]
 #[derive(Subcommand)]
 #[command(rename_all = "kebab-case")]
 pub(crate) enum Story {
@@ -388,6 +390,7 @@ pub(crate) enum CacheCommand {
     Verify,
 }
 
+#[cfg(feature = "som")]
 #[derive(Subcommand)]
 #[command(rename_all = "kebab-case")]
 pub(crate) enum SomCommand {

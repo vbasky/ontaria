@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.9.2
+
+- `cargo install ontaria-cli` installs the binary from crates.io. Story Object Model commands are the `som` feature. That crate is vendored and is not published, so the crates.io package leaves the feature off. A checkout or a git install can pass `--features som`. GitHub release binaries are built with the feature.
+- The README image uses an absolute URL so crates.io can render it.
+
 ## 0.9.1
 
 - The library lives at `crates/ontaria`. Macros, WebAssembly, and Python bindings live under `crates/` too. The root `Cargo.toml` is the workspace, so `cargo run --bin ontaria` builds the CLI.

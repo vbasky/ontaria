@@ -1,18 +1,22 @@
 # ontaria
 
-![ontaria — look up any term in an ontology](docs/banner.png)
+![ontaria — look up any term in an ontology](https://raw.githubusercontent.com/vbasky/ontaria/main/docs/banner.png)
 
 Ontaria parses an RDF Schema or OWL ontology and looks up, validates, diffs, and generates from it. The `ontaria` library is `crates/ontaria`. The `ontaria` binary is the `ontaria-cli` crate. The root `Cargo.toml` is the workspace.
 
-Version 0.9.1 checks the sign of XML Schema integers and adds an optional closed-world range check. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
+Version 0.9.2 publishes the `ontaria-cli` crate. `cargo install ontaria-cli` does not include Story Object Model commands, because that crate is not on crates.io. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
 ```bash
-cargo install --path crates/ontaria-cli
-# or, without a checkout:
-# cargo install --git https://github.com/vbasky/ontaria ontaria-cli
-# binary: ontaria
+cargo install ontaria-cli
+```
+
+The binary is named `ontaria`. That install has no Story Object Model commands. The vendored `som` crate is not published. Build those commands from this repository:
+
+```bash
+cargo install --path crates/ontaria-cli --features som
+cargo install --git https://github.com/vbasky/ontaria ontaria-cli --features som
 ```
 
 From a checkout, build the workspace and run the binary:
@@ -20,9 +24,10 @@ From a checkout, build the workspace and run the binary:
 ```bash
 cargo build
 cargo run --bin ontaria -- testdata/simple.ttl
+cargo run --bin ontaria --features som -- testdata/simple.ttl
 ```
 
-Pushing a `v*` tag builds those binaries for macOS, Linux, and Windows, attaches them to a GitHub release, and publishes `ontaria-macros` and `ontaria` to crates.io.
+Pushing a `v*` tag builds binaries for macOS, Linux, and Windows with the `som` feature, attaches them to a GitHub release, and publishes `ontaria-macros`, `ontaria`, and `ontaria-cli` to crates.io. The published CLI crate omits the `som` feature.
 
 The library:
 
@@ -43,6 +48,8 @@ Optional features are `async-fetch`, `shacl`, `reasoning`, and `codegen`. The CL
 `Ontology::load` reads the file, resolves imports, and returns an immutable `Send + Sync` value. Later queries take `&self` and do not touch the network. `parse_document` and `validate_rdf` take the bytes plus a base IRI. The base may be an absolute IRI or a filesystem path. A path is stored as a `file://` IRI.
 
 `validate_rdf` reads Turtle, N-Triples, N-Quads, TriG, RDF/XML, and JSON-LD. It also reads EBUCore XML and MediaInfo JSON, which are not RDF, and keeps their text and `#value` fields. `validate_json` checks a `serde_json::Value` and does not expand `@context`. `is_jsonld_document` and `is_ebucore_instance` tell those cases apart.
+
+`validate_rdf_with`, `validate_graph_with`, `validate_json_with`, and `validate_statements_with` take `ValidateOptions`. `closed_world` requires an object value to be the property's range class, or a subclass. It is off by default. `xsd:nonNegativeInteger`, `xsd:positiveInteger`, `xsd:nonPositiveInteger`, and `xsd:negativeInteger` reject the wrong sign.
 
 ```rust
 use ontaria::{LoadOptions, Ontology};
@@ -92,8 +99,8 @@ ontaria --ontology <URL_OR_PATH> gen context|rust|typescript|go|python|json-sche
 ontaria map validate <MAPPING>
 ontaria map apply <MAPPING> <INPUT>
 ontaria map reverse <MAPPING> <INPUT>
-ontaria som validate <URL_OR_PATH>
-ontaria som decode <URL_OR_PATH>
+ontaria som validate <URL_OR_PATH>   # requires the som feature
+ontaria som decode <URL_OR_PATH>     # requires the som feature
 ontaria --ontology <URL_OR_PATH> reason [--owl-rl]
 ontaria --ontology <URL_OR_PATH> serve [--bind 127.0.0.1:8080]
 ontaria --ontology <URL_OR_PATH> mcp
@@ -101,7 +108,7 @@ ontaria --ontology <URL_OR_PATH> mcp
 
 `-o` is `--ontology`. A single positional path names that same ontology. A term may be an IRI, `prefix:Local`, a local name, or a label. `--lang` is a comma-separated preference list. The default label is language-less, then English, then the first value.
 
-With no path and no command, `ontaria` prints help and exits 0. A path with no command loads the file and prints a summary. Quote a glob so the shell does not expand it. `--log-file FILE` writes the JSON envelope to that file. The report is JSON.
+With no path and no command, `ontaria` prints help and exits 0. Help lists Commands, then Arguments, then Options. The second usage line is `ontaria <COMMAND>`. A path before a command still names the ontology, as in the examples above. A path with no command loads the file and prints a summary. Quote a glob so the shell does not expand it. `--log-file FILE` writes the JSON envelope to that file. The report is JSON.
 
 Ontology flags apply to lookup, `validate`, `lint`, `reason`, `gen`, `map validate`, `serve`, and `mcp`. `--cache-dir` and `--offline` also apply to `fetch`, `cache`, and `som`. `diff` does not take an ontology. `list-cached` is a hidden alias of `cache list`.
 
@@ -129,10 +136,11 @@ The schema.org JSON-LD context is embedded as `@vocab` `https://schema.org/`. Te
 
 ## Other crates
 
-- `ontaria-wasm` compiles to a host cdylib and to WASM with wasm-pack. It does not fetch.
-- `ontaria-python` exposes `parse` and `class_label` through PyO3. It does not fetch.
+- `crates/ontaria-wasm` compiles to a host cdylib and to WASM with `wasm-pack build --target web crates/ontaria-wasm`. It does not fetch.
+- `crates/ontaria-python` exposes `parse` and `class_label` through PyO3. It does not fetch.
+- `crates/ontaria-macros` is the `terms!` proc macro. The `codegen` feature re-exports it.
 - `skills/ontaria/SKILL.md` tells an agent how to call the CLI and MCP tools.
-- `fuzz/` is a separate cargo-fuzz workspace. `benches/load.rs` is the criterion bench.
+- `fuzz/` is a separate cargo-fuzz workspace. `crates/ontaria/benches/load.rs` is the criterion bench.
 
 ## Licence
 

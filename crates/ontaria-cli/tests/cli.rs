@@ -149,11 +149,19 @@ fn flags_follow_the_command_that_uses_them() {
     assert!(!diff_help.contains("--imports"), "{diff_help}");
     assert!(!diff_help.contains("--cache-dir"), "{diff_help}");
 
-    let som_help = help_text(&["som", "validate", "--help"]);
-    assert!(!som_help.contains("--ontology"), "{som_help}");
-    assert!(!som_help.contains("--imports"), "{som_help}");
-    assert!(som_help.contains("--cache-dir"), "{som_help}");
-    assert!(som_help.contains("--offline"), "{som_help}");
+    #[cfg(feature = "som")]
+    {
+        let som_help = help_text(&["som", "validate", "--help"]);
+        assert!(!som_help.contains("--ontology"), "{som_help}");
+        assert!(!som_help.contains("--imports"), "{som_help}");
+        assert!(som_help.contains("--cache-dir"), "{som_help}");
+        assert!(som_help.contains("--offline"), "{som_help}");
+    }
+    #[cfg(not(feature = "som"))]
+    assert!(
+        !help_text(&["--help"]).contains("Story Object Model"),
+        "som is absent unless the feature is on"
+    );
 
     let fetch_help = help_text(&["fetch", "--help"]);
     assert!(!fetch_help.contains("--ontology"), "{fetch_help}");
@@ -325,6 +333,7 @@ news:story a news:NewsItem ;
 }
 
 #[test]
+#[cfg(feature = "som")]
 fn som_validate_accepts_the_upstream_hurricane_envelope() {
     let message = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -344,6 +353,7 @@ fn som_validate_accepts_the_upstream_hurricane_envelope() {
 }
 
 #[test]
+#[cfg(feature = "som")]
 fn som_validate_rejects_a_pre_1_message() {
     let path = std::env::temp_dir().join(format!("ontaria-som-{}.json", std::process::id()));
     std::fs::write(
@@ -363,6 +373,7 @@ fn som_validate_rejects_a_pre_1_message() {
 }
 
 #[test]
+#[cfg(feature = "som")]
 fn som_validate_reads_published_example_urls() {
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../third_party/som/examples");

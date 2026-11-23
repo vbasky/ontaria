@@ -16,11 +16,13 @@ mod cli;
 mod mcp;
 mod output;
 mod serve;
+#[cfg(feature = "som")]
 mod som_cmd;
 
+#[cfg(feature = "som")]
+use cli::Story;
 use cli::{
     Build, CacheCommand, Check, Cli, GenTarget, Host, Kind, LoadFlags, Lookup, MapCommand, Store,
-    Story,
 };
 use output::{print_error, print_success};
 
@@ -60,6 +62,7 @@ fn dispatch(cli: Cli) -> ontaria::Result<ExitCode> {
         Some(cli::Command::Build(command)) => return build(&paths, &root, command),
         Some(cli::Command::Store(command)) => return store(&paths, &root, command),
         Some(cli::Command::Host(command)) => return host(&paths, &root, command),
+        #[cfg(feature = "som")]
         Some(cli::Command::Story(Story::Som { cache, command })) => {
             let flags = cache_invocation("som", &paths, &root, cache.into())?;
             return som_cmd::run(command, flags.offline, flags.cache_dir.as_deref());
