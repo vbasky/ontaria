@@ -3,6 +3,8 @@
 //! The checker accepts a JSON document or an [`oxrdf::Graph`]. It does not
 //! read files. Unknown terms, domain and range, cardinality, enumerations,
 //! disjoint classes, and deprecated terms each produce a [`ValidationIssue`].
+//! An object value is not required to carry the range class unless
+//! [`ValidateOptions::closed_world`] is set.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -106,34 +108,93 @@ impl ValidationReport {
     }
 }
 
+/// Options for the `*_with` validators.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ValidateOptions {
+    /// Require each resource value of an object property to be typed with every
+    /// `rdfs:range` class, or a subclass, as SHACL `sh:class` does. Several
+    /// `schema:rangeIncludes` classes match when any one of them does.
+    /// Off by default, because RDFS would instead infer the extra type.
+    pub closed_world: bool,
+}
+
+impl ValidateOptions {
+    pub fn closed_world(mut self, on: bool) -> Self {
+        self.closed_world = on;
+        self
+    }
+}
+
 /// Validate a JSON document. Objects may use `@type`/`type` and property keys
 /// that are IRIs, `prefix:Name`, or local names.
 pub fn validate_json(ontology: &Ontology, value: &Value) -> ValidationReport {
+    validate_json_with(ontology, value, ValidateOptions::default())
+}
+
+/// [`validate_json`] with [`ValidateOptions`].
+///
+/// A nested object is recorded as a resource value only when it has `@id` or
+/// `id`. Closed-world checks on nested objects without an id need
+/// [`validate_rdf_with`], [`validate_graph_with`], or [`validate_statements_with`].
+pub fn validate_json_with(
+    ontology: &Ontology,
+    value: &Value,
+    options: ValidateOptions,
+) -> ValidationReport {
     let mut instances = Vec::new();
     collect_json(ontology, value, "$", &mut instances);
-    check_instances(ontology, &instances)
+    check_instances(ontology, &instances, options)
 }
 
 /// Validate triples already parsed into an [`Graph`].
 pub fn validate_graph(ontology: &Ontology, graph: &Graph) -> ValidationReport {
+    validate_graph_with(ontology, graph, ValidateOptions::default())
+}
+
+/// [`validate_graph`] with [`ValidateOptions`].
+pub fn validate_graph_with(
+    ontology: &Ontology,
+    graph: &Graph,
+    options: ValidateOptions,
+) -> ValidationReport {
     let instances = instances_from_graph(ontology, graph);
-    check_instances(ontology, &instances)
+    check_instances(ontology, &instances, options)
 }
 
 /// Validate by reading Turtle, N-Triples, or another syntax ontaria already parses.
 pub fn validate_rdf(ontology: &Ontology, bytes: &[u8], base_uri: &str) -> Result<ValidationReport> {
+    validate_rdf_with(ontology, bytes, base_uri, ValidateOptions::default())
+}
+
+/// [`validate_rdf`] with [`ValidateOptions`].
+pub fn validate_rdf_with(
+    ontology: &Ontology,
+    bytes: &[u8],
+    base_uri: &str,
+    options: ValidateOptions,
+) -> Result<ValidationReport> {
     let parsed = crate::parser::parse_document(bytes, base_uri)?;
-    Ok(validate_statements(ontology, &parsed))
+    Ok(validate_statements_with(ontology, &parsed, options))
 }
 
 pub fn validate_statements(ontology: &Ontology, data: &Ontology) -> ValidationReport {
+    validate_statements_with(ontology, data, ValidateOptions::default())
+}
+
+/// [`validate_statements`] with [`ValidateOptions`].
+pub fn validate_statements_with(
+    ontology: &Ontology,
+    data: &Ontology,
+    options: ValidateOptions,
+) -> ValidationReport {
     let mut graph = Graph::new();
     for statement in &data.statements {
         if let Some(triple) = crate::extract::statement_to_triple(statement) {
             graph.insert(&triple);
         }
     }
-    validate_graph(ontology, &graph)
+    validate_graph_with(ontology, &graph, options)
 }
 
 #[derive(Debug, Clone)]
@@ -281,10 +342,22 @@ fn instances_from_graph(ontology: &Ontology, graph: &Graph) -> Vec<Instance> {
         .collect()
 }
 
-fn check_instances(ontology: &Ontology, instances: &[Instance]) -> ValidationReport {
+type TypeIndex<'a> = BTreeMap<&'a str, &'a [String]>;
+
+fn check_instances(
+    ontology: &Ontology,
+    instances: &[Instance],
+    options: ValidateOptions,
+) -> ValidationReport {
+    let index: Option<TypeIndex> = options.closed_world.then(|| {
+        instances
+            .iter()
+            .map(|instance| (instance.id.as_str(), instance.types.as_slice()))
+            .collect()
+    });
     let mut issues = Vec::new();
     for instance in instances {
-        check_instance(ontology, instance, &mut issues);
+        check_instance(ontology, instance, index.as_ref(), &mut issues);
     }
     issues.sort_by(|left, right| {
         left.path
@@ -297,7 +370,12 @@ fn check_instances(ontology: &Ontology, instances: &[Instance]) -> ValidationRep
     ValidationReport { issues }
 }
 
-fn check_instance(ontology: &Ontology, instance: &Instance, issues: &mut Vec<ValidationIssue>) {
+fn check_instance(
+    ontology: &Ontology,
+    instance: &Instance,
+    closed_world: Option<&TypeIndex<'_>>,
+    issues: &mut Vec<ValidationIssue>,
+) {
     let mut classes = Vec::new();
     for type_iri in &instance.types {
         if vocab::is_builtin_namespace(type_iri) {
@@ -366,7 +444,7 @@ fn check_instance(ontology: &Ontology, instance: &Instance, issues: &mut Vec<Val
             ));
         }
         check_domain(ontology, instance, property, issues);
-        check_range(ontology, instance, property, nodes, issues);
+        check_range(ontology, instance, property, nodes, closed_world, issues);
         check_count(ontology, instance, property, nodes.len() as u64, issues);
     }
 
@@ -485,9 +563,14 @@ fn check_range(
     instance: &Instance,
     property: &Property,
     nodes: &[NodeValue],
+    closed_world: Option<&TypeIndex<'_>>,
     issues: &mut Vec<ValidationIssue>,
 ) {
     let ranges = effective_ranges(ontology, property);
+    // Computed once per property. `schema:rangeIncludes` shares `property.range`
+    // with `rdfs:range`, and the two have different closed-world meanings.
+    let included =
+        closed_world.map(|_| declared_range_includes(ontology, range_source(ontology, property)));
     for node in nodes {
         match node {
             NodeValue::Literal { value, datatype } => {
@@ -550,6 +633,53 @@ fn check_range(
                             "controlled",
                             Severity::Error,
                             format!("{iri} is not a skos:Concept"),
+                        ));
+                    }
+                }
+                if let Some(index) = closed_world
+                    && let Some(includes) = included.as_ref()
+                {
+                    let node_types = index.get(iri.as_str()).copied().unwrap_or(&[]);
+                    // `owl:oneOf` lists individuals and is already checked above.
+                    let classes = ranges.iter().filter(|range| {
+                        ontology
+                            .classes
+                            .get(*range)
+                            .is_some_and(|class| class.one_of.is_empty())
+                    });
+                    let mut hard = Vec::new();
+                    let mut soft = Vec::new();
+                    for range in classes {
+                        if includes.contains(range) {
+                            soft.push(range.as_str());
+                        } else {
+                            hard.push(range.as_str());
+                        }
+                    }
+                    // `rdfs:range` is a conjunction. `schema:rangeIncludes` is a disjunction.
+                    if !hard.is_empty() {
+                        for range in hard {
+                            if !type_matches(ontology, node_types, range) {
+                                issues.push(issue(
+                                    &instance.path,
+                                    &property.uri,
+                                    "range",
+                                    Severity::Error,
+                                    format!("{iri} is not a {range}"),
+                                ));
+                            }
+                        }
+                    } else if !soft.is_empty()
+                        && !soft
+                            .iter()
+                            .any(|range| type_matches(ontology, node_types, range))
+                    {
+                        issues.push(issue(
+                            &instance.path,
+                            &property.uri,
+                            "range",
+                            Severity::Error,
+                            format!("{iri} is not a {}", soft.join(" or ")),
                         ));
                     }
                 }
@@ -679,8 +809,17 @@ fn ancestors(ontology: &Ontology, types: &[String]) -> Vec<String> {
 }
 
 fn effective_ranges(ontology: &Ontology, property: &Property) -> Vec<String> {
+    ontology
+        .properties
+        .get(range_source(ontology, property))
+        .map(|property| property.range.clone())
+        .unwrap_or_default()
+}
+
+/// The property whose `range` list [`effective_ranges`] returns.
+fn range_source<'a>(ontology: &'a Ontology, property: &'a Property) -> &'a str {
     if !property.range.is_empty() {
-        return property.range.clone();
+        return property.uri.as_str();
     }
     let mut pending: Vec<&str> = property
         .super_properties
@@ -694,12 +833,25 @@ fn effective_ranges(ontology: &Ontology, property: &Property) -> Vec<String> {
         }
         if let Some(parent) = ontology.properties.get(uri) {
             if !parent.range.is_empty() {
-                return parent.range.clone();
+                return uri;
             }
             pending.extend(parent.super_properties.iter().map(String::as_str));
         }
     }
-    Vec::new()
+    property.uri.as_str()
+}
+
+fn declared_range_includes(ontology: &Ontology, owner: &str) -> BTreeSet<String> {
+    let mut includes = BTreeSet::new();
+    for statement in &ontology.statements {
+        if statement.subject != owner || statement.kind != crate::model::TermKind::Iri {
+            continue;
+        }
+        if vocab::SCHEMA_RANGE.contains(&statement.predicate.as_str()) {
+            includes.insert(statement.object.clone());
+        }
+    }
+    includes
 }
 
 fn type_matches(ontology: &Ontology, types: &[String], domain: &str) -> bool {
@@ -737,9 +889,11 @@ fn literal_matches(datatype: &str, value: &str, actual: Option<&str>) -> bool {
     let name = local_name(datatype);
     match name {
         "string" | "normalizedString" => true,
-        "integer" | "int" | "long" | "short" | "nonNegativeInteger" | "positiveInteger" => {
-            value.parse::<i64>().is_ok()
-        }
+        "integer" | "int" | "long" | "short" => value.parse::<i64>().is_ok(),
+        "nonNegativeInteger" => value.parse::<u64>().is_ok(),
+        "positiveInteger" => value.parse::<u64>().is_ok_and(|number| number > 0),
+        "nonPositiveInteger" => value.parse::<i64>().is_ok_and(|number| number <= 0),
+        "negativeInteger" => value.parse::<i64>().is_ok_and(|number| number < 0),
         "decimal" | "float" | "double" => value.parse::<f64>().is_ok(),
         "boolean" => matches!(value, "true" | "false" | "1" | "0"),
         "date" => value.len() >= 10 && value.as_bytes().get(4) == Some(&b'-'),
@@ -873,5 +1027,126 @@ mod tests {
         assert!(!ok.has_errors(), "{ok:?}");
         let bad = validate_json(&ontology, &json!({"@type": ["ex:Person", "ex:Org"]}));
         assert!(bad.issues.iter().any(|issue| issue.rule == "disjoint"));
+    }
+
+    #[test]
+    fn literal_matches_checks_integer_sign() {
+        let xsd = |name: &str| format!("{}{name}", vocab::XSD);
+        assert!(!literal_matches(&xsd("nonNegativeInteger"), "-1", None));
+        assert!(literal_matches(&xsd("nonNegativeInteger"), "0", None));
+        assert!(!literal_matches(&xsd("positiveInteger"), "0", None));
+        assert!(literal_matches(&xsd("positiveInteger"), "1", None));
+        assert!(!literal_matches(&xsd("negativeInteger"), "0", None));
+        assert!(literal_matches(&xsd("negativeInteger"), "-1", None));
+        assert!(!literal_matches(&xsd("nonPositiveInteger"), "1", None));
+        assert!(literal_matches(&xsd("nonPositiveInteger"), "0", None));
+        assert!(literal_matches(&xsd("integer"), "-1", None));
+    }
+
+    #[test]
+    fn closed_world_requires_the_range_class() {
+        let ontology = parse_document(
+            br#"
+            @prefix ex: <http://example.org/> .
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+            ex:Mime a owl:Class . ex:Lang a owl:Class . ex:Sub a owl:Class ; rdfs:subClassOf ex:Mime .
+            ex:mime a owl:ObjectProperty ; rdfs:range ex:Mime .
+            "#,
+            "http://example.org/",
+        )
+        .unwrap();
+        let doc = |value: &str| {
+            format!(r#"{{"@context":{{"ex":"http://example.org/"}},"ex:mime":{value}}}"#)
+        };
+        let closed = ValidateOptions::default().closed_world(true);
+        let ranges = |report: ValidationReport| {
+            report
+                .issues
+                .iter()
+                .filter(|issue| issue.rule == "range")
+                .count()
+        };
+        let base = "http://example.org/d";
+
+        let wrong = doc(r#"{"@type":"ex:Lang"}"#);
+        assert_eq!(
+            ranges(validate_rdf(&ontology, wrong.as_bytes(), base).unwrap()),
+            0
+        );
+        assert_eq!(
+            ranges(validate_rdf_with(&ontology, wrong.as_bytes(), base, closed).unwrap()),
+            1
+        );
+        let sub = doc(r#"{"@type":"ex:Sub"}"#);
+        assert_eq!(
+            ranges(validate_rdf_with(&ontology, sub.as_bytes(), base, closed).unwrap()),
+            0
+        );
+        let untyped = doc("{}");
+        assert_eq!(
+            ranges(validate_rdf_with(&ontology, untyped.as_bytes(), base, closed).unwrap()),
+            1
+        );
+    }
+
+    #[test]
+    fn closed_world_treats_range_includes_as_alternatives() {
+        let ontology = parse_document(
+            br#"
+            @prefix ex: <http://example.org/> .
+            @prefix owl: <http://www.w3.org/2002/07/owl#> .
+            @prefix schema: <https://schema.org/> .
+            ex:Image a owl:Class .
+            ex:Url a owl:Class .
+            ex:Other a owl:Class .
+            ex:thumb a owl:ObjectProperty ; schema:rangeIncludes ex:Image, ex:Url .
+            "#,
+            "http://example.org/",
+        )
+        .unwrap();
+        let doc = |value: &str| {
+            format!(r#"{{"@context":{{"ex":"http://example.org/"}},"ex:thumb":{value}}}"#)
+        };
+        let closed = ValidateOptions::default().closed_world(true);
+        let ranges = |report: ValidationReport| {
+            report
+                .issues
+                .iter()
+                .filter(|issue| issue.rule == "range")
+                .count()
+        };
+        let base = "http://example.org/d";
+        let image = doc(r#"{"@type":"ex:Image"}"#);
+        assert_eq!(
+            ranges(validate_rdf_with(&ontology, image.as_bytes(), base, closed).unwrap()),
+            0
+        );
+        let other = doc(r#"{"@type":"ex:Other"}"#);
+        assert_eq!(
+            ranges(validate_rdf_with(&ontology, other.as_bytes(), base, closed).unwrap()),
+            1
+        );
+    }
+
+    #[test]
+    fn closed_world_keeps_one_of_membership() {
+        let ontology = ontology();
+        let closed = ValidateOptions::default().closed_world(true);
+        let report = validate_json_with(
+            &ontology,
+            &json!({
+                "@id": "ex:item",
+                "@type": "ex:News",
+                "ex:headline": "Hello",
+                "ex:status": {"@id": "ex:live"},
+                "ex:topic": {"@id": "ex:sports"}
+            }),
+            closed,
+        );
+        assert!(
+            !report.issues.iter().any(|issue| issue.rule == "range"),
+            "{report:?}"
+        );
     }
 }

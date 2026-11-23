@@ -2,9 +2,9 @@
 
 ![ontaria — look up any term in an ontology](docs/banner.png)
 
-Ontaria parses an RDF Schema or OWL ontology and looks up, validates, diffs, and generates from it. The `ontaria` crate is a library. The `ontaria` binary is the `ontaria-cli` crate.
+Ontaria parses an RDF Schema or OWL ontology and looks up, validates, diffs, and generates from it. The `ontaria` library is `crates/ontaria`. The `ontaria` binary is the `ontaria-cli` crate. The root `Cargo.toml` is the workspace.
 
-Version 0.9.0 adds Story Object Model checks and EBUCore instance documents. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
+Version 0.9.1 checks the sign of XML Schema integers and adds an optional closed-world range check. The public API is not frozen. See [STABILITY.md](STABILITY.md) and [CHANGELOG.md](CHANGELOG.md).
 
 ## Install
 
@@ -13,6 +13,13 @@ cargo install --path crates/ontaria-cli
 # or, without a checkout:
 # cargo install --git https://github.com/vbasky/ontaria ontaria-cli
 # binary: ontaria
+```
+
+From a checkout, build the workspace and run the binary:
+
+```bash
+cargo build
+cargo run --bin ontaria -- testdata/simple.ttl
 ```
 
 Pushing a `v*` tag builds those binaries for macOS, Linux, and Windows, attaches them to a GitHub release, and publishes `ontaria-macros` and `ontaria` to crates.io.

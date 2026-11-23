@@ -73,8 +73,9 @@ pub use parser::{
 pub use reason::{TypeFacts, apply_owl_rl, apply_rdfs, types_of};
 pub use shacl::validate_shacl;
 pub use validate::{
-    Severity, ValidationIssue, ValidationReport, validate_graph, validate_json, validate_rdf,
-    validate_statements,
+    Severity, ValidateOptions, ValidationIssue, ValidationReport, validate_graph,
+    validate_graph_with, validate_json, validate_json_with, validate_rdf, validate_rdf_with,
+    validate_statements, validate_statements_with,
 };
 
 #[cfg(feature = "codegen")]

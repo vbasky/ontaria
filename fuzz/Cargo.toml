@@ -10,7 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-ontaria = { path = "..", default-features = false }
+ontaria = { path = "../crates/ontaria", default-features = false }
 
 [[bin]]
 name = "parse_document"

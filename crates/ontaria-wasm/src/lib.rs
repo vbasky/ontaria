@@ -1,6 +1,6 @@
 //! Browser and Node bindings. The crate does not fetch the network.
 //!
-//! Build for the web with `wasm-pack build --target web ontaria-wasm`.
+//! Build for the web with `wasm-pack build --target web crates/ontaria-wasm`.
 //! The host `cdylib` compiles without a wasm32 target so CI can type-check it.
 
 use wasm_bindgen::prelude::*;

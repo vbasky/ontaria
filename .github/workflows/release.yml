@@ -56,7 +56,7 @@ jobs:
             *) echo "::error::expected a v* tag, got '${RELEASE_TAG}'"; exit 1 ;;
           esac
           expected="${RELEASE_TAG#v}"
-          got=$(awk -F'"' '/^version = / { print $2; exit }' Cargo.toml)
+          got=$(awk -F'"' '/^version = / { print $2; exit }' crates/ontaria/Cargo.toml)
           if [ "$got" != "$expected" ]; then
             echo "::error::checked out ontaria ${got}, tag is ${RELEASE_TAG}"
             exit 1

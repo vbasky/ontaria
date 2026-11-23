@@ -600,7 +600,7 @@ mod tests {
 
     fn sample() -> Ontology {
         parse_turtle(
-            include_str!("../testdata/simple.ttl").as_bytes(),
+            include_str!("../../../testdata/simple.ttl").as_bytes(),
             "http://example.org/test",
         )
         .unwrap()

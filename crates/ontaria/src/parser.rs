@@ -723,7 +723,7 @@ mod tests {
 
     #[test]
     fn parses_classes_hierarchy_and_properties() {
-        let ttl = include_str!("../testdata/simple.ttl");
+        let ttl = include_str!("../../../testdata/simple.ttl");
         let ontology = parse(ttl);
         let person = ontology
             .classes
@@ -759,7 +759,7 @@ mod tests {
 
     #[test]
     fn reads_schema_domain_includes_and_rdf_property() {
-        let ttl = include_str!("../testdata/schema.ttl");
+        let ttl = include_str!("../../../testdata/schema.ttl");
         let ontology = parse(ttl);
         let birth = ontology
             .properties
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     fn reads_owl_restriction_cardinality() {
-        let ttl = include_str!("../testdata/restrictions.ttl");
+        let ttl = include_str!("../../../testdata/restrictions.ttl");
         let ontology = parse(ttl);
         let document = ontology
             .classes
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn reads_published_vocabulary_excerpts() {
-        let foaf = parse(include_str!("../testdata/excerpts/foaf.ttl"));
+        let foaf = parse(include_str!("../../../testdata/excerpts/foaf.ttl"));
         let person = foaf.get_class("http://xmlns.com/foaf/0.1/Person").unwrap();
         assert_eq!(person.label, "Person");
         assert_eq!(
@@ -796,7 +796,7 @@ mod tests {
             vec!["http://xmlns.com/foaf/0.1/Agent".to_string()]
         );
 
-        let dublin = parse(include_str!("../testdata/excerpts/dublin-core.ttl"));
+        let dublin = parse(include_str!("../../../testdata/excerpts/dublin-core.ttl"));
         assert!(
             dublin
                 .get_property("http://purl.org/dc/elements/1.1/title")
@@ -808,7 +808,7 @@ mod tests {
                 .is_some()
         );
 
-        let skos = parse(include_str!("../testdata/excerpts/skos.ttl"));
+        let skos = parse(include_str!("../../../testdata/excerpts/skos.ttl"));
         assert_eq!(
             skos.get_class("http://www.w3.org/2004/02/skos/core#Concept")
                 .unwrap()
@@ -816,7 +816,7 @@ mod tests {
             "Concept"
         );
 
-        let ebu = parse(include_str!("../testdata/excerpts/ebucoreplus.ttl"));
+        let ebu = parse(include_str!("../../../testdata/excerpts/ebucoreplus.ttl"));
         let media = ebu
             .get_class("http://www.ebu.ch/metadata/ontologies/ebucoreplus#MediaResource")
             .unwrap();
@@ -961,17 +961,17 @@ ex:g { ex:Item a owl:Class ; rdfs:label "Item" . }
     #[test]
     fn reads_the_same_news_item_from_turtle_rdfxml_and_jsonld() {
         let turtle = parse_document(
-            include_bytes!("../testdata/news.ttl"),
+            include_bytes!("../../../testdata/news.ttl"),
             "http://example.org/news",
         )
         .unwrap();
         let rdfxml = parse_document(
-            include_bytes!("../testdata/news.rdf"),
+            include_bytes!("../../../testdata/news.rdf"),
             "http://example.org/news",
         )
         .unwrap();
         let jsonld = parse_document(
-            include_bytes!("../testdata/news.jsonld"),
+            include_bytes!("../../../testdata/news.jsonld"),
             "http://example.org/news",
         )
         .unwrap();
@@ -1000,7 +1000,7 @@ ex:g { ex:Item a owl:Class ; rdfs:label "Item" . }
     #[test]
     fn reads_a_schema_org_news_article() {
         let ontology = parse_document(
-            include_bytes!("../testdata/timesofindia.jsonld"),
+            include_bytes!("../../../testdata/timesofindia.jsonld"),
             "https://timesofindia.indiatimes.com/world/us/trump-derangement-syndrome-is-real-elon-musk-compares-it-to-rabies-in-fox-interview-with-us-president-donald-trump/articleshow/118364537.cms",
         )
         .unwrap();

@@ -11,23 +11,24 @@ const BANNER: &str = include_str!("banner.txt");
     about = None,
     long_about = None,
     before_help = BANNER,
-    subcommand_precedence_over_arg = true
+    subcommand_precedence_over_arg = true,
+    override_usage = "ontaria [OPTIONS] [PATH]...\n       ontaria <COMMAND>"
 )]
 pub(crate) struct Cli {
     /// Ontology file, URL, or glob. Quote a glob so the shell does not expand it.
     /// With no command, each path is summarized. With a command that loads an
     /// ontology, one path names that ontology.
-    #[arg(value_name = "PATH", help_heading = "Input")]
+    #[arg(value_name = "PATH")]
     pub paths: Vec<String>,
-
-    /// Write the JSON envelope to a file instead of stdout.
-    #[arg(long, global = true, help_heading = "Output", value_name = "FILE")]
-    pub log_file: Option<PathBuf>,
 
     /// Accepted before the command. Commands that load an ontology also accept
     /// these flags after the command name.
     #[command(flatten)]
     pub load: OntologyOpts,
+
+    /// Write the JSON envelope to a file instead of stdout.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub log_file: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Option<Command>,
@@ -63,7 +64,6 @@ impl LoadFlags {
 macro_rules! ontology_opts {
     ($name:ident, $global:literal) => {
         #[derive(Args, Clone, Default)]
-        #[command(next_help_heading = "Ontology")]
         pub(crate) struct $name {
             /// Ontology URL, or a path to a local file.
             /// One PATH before the command names this same ontology.
@@ -122,7 +122,6 @@ ontology_opts!(OntologyOptsGlobal, true);
 macro_rules! cache_opts {
     ($name:ident, $global:literal) => {
         #[derive(Args, Clone, Default)]
-        #[command(next_help_heading = "Cache")]
         pub(crate) struct $name {
             /// Cache directory. Overrides ONTARIA_CACHE_DIR.
             #[arg(long, global = $global, value_name = "DIR")]

@@ -3,7 +3,7 @@
 ![ontaria — look up any term in an ontology](../../docs/banner.png)
 
 Look up, validate, diff, and generate from an RDF Schema or OWL ontology.
-The binary is named `ontaria`. The library crate is [`ontaria`](../../README.md).
+The binary is named `ontaria`. The library crate is [`ontaria`](../../README.md) at `crates/ontaria`. From the repository root, `cargo run --bin ontaria` builds it.
 
 ## Install
 
@@ -58,7 +58,7 @@ A pattern that matches nothing exits 1 with `no files matched`.
 
 | Flag | Where it applies | Description |
 | --- | --- | --- |
-| `PATH` | Input | File, URL, or glob. With no command, each match is summarized. With a command that loads an ontology, one path names that ontology. |
+| `PATH` | Arguments | File, URL, or glob. With no command, each match is summarized. With a command that loads an ontology, one path names that ontology. |
 | `-o`, `--ontology` | Ontology commands | The same ontology as one `PATH`. Repeat it only when both names are the same file. |
 | `--imports`, `--catalog`, `--lang`, `--locked`, `--lock` | Ontology commands | How that ontology is loaded. |
 | `--cache-dir`, `--offline` | Ontology commands, `fetch`, `cache`, `som` | Cache location and network use. |

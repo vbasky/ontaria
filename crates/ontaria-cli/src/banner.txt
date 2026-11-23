@@ -1,4 +1,4 @@
-  ontaria
+  🦀 ontaria
 
-  ontology lookup
+  🔎 ontology lookup
   RDF Schema and OWL — query, validate, diff, generate

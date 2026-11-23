@@ -2,9 +2,14 @@
 
 ## Unreleased
 
+## 0.9.1
+
+- The library lives at `crates/ontaria`. Macros, WebAssembly, and Python bindings live under `crates/` too. The root `Cargo.toml` is the workspace, so `cargo run --bin ontaria` builds the CLI.
+- `xsd:nonNegativeInteger`, `xsd:positiveInteger`, `xsd:nonPositiveInteger`, and `xsd:negativeInteger` reject values with the wrong sign.
+- `ValidateOptions::closed_world` requires each object value to be the property's `rdfs:range` class, or a subclass. `schema:rangeIncludes` matches when any listed class does. `validate_json_with`, `validate_graph_with`, `validate_rdf_with`, and `validate_statements_with` take the options. The existing functions stay open-world.
 - `ontaria-cli` lives at `crates/ontaria-cli`. The binary crate has `src/cli.rs`, `src/banner.txt`, and its own README, and it inherits edition, license, and repository from the workspace.
 - With no path and no subcommand, `ontaria` prints help and exits 0.
-- Help splits arguments into Input, Output, and Ontology. A positional `PATH` summarizes each file when no command is given. A glob expands to matching files.
+- Help uses Commands, Arguments, and Options, with `-h` and `-V` last. The banner is the tool name, a role line, and a tagline. A positional `PATH` summarizes each file when no command is given. A glob expands to matching files.
 - Ontology flags (`-o`, `--imports`, `--catalog`, `--lang`, `--locked`, `--lock`) belong to the commands that load an ontology. `--cache-dir` and `--offline` also belong to `fetch`, `cache`, and `som`. `diff`, `map apply`, and `map reverse` do not take them. `--log-file` is the output flag for every command.
 - One `PATH` and `-o` name the same ontology. When both are present they must name the same file. `list-cached` remains available and is hidden from help; `cache list` is the listed command.
 

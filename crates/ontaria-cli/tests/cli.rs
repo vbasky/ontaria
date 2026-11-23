@@ -23,11 +23,11 @@ fn help_lists_the_query_commands() {
         "batch-get-class",
         "batch-search",
         "ontology lookup",
+        "Arguments:",
+        "Options:",
         "--log-file",
         "--ontology",
-        "Input:",
-        "Output:",
-        "Ontology:",
+        "Usage: ontaria [OPTIONS] [PATH]...\n       ontaria <COMMAND>",
     ] {
         assert!(text.contains(command), "help is missing {command}: {text}");
     }
@@ -168,8 +168,18 @@ fn flags_follow_the_command_that_uses_them() {
 
     let root_help = help_text(&["--help"]);
     assert!(!root_help.contains("list-cached"), "{root_help}");
-    assert!(root_help.contains("Ontology:"));
-    assert!(root_help.contains("Input:"));
+    assert!(root_help.contains("Arguments:"), "{root_help}");
+    assert!(root_help.contains("Options:"), "{root_help}");
+    assert!(!root_help.contains("Input:"), "{root_help}");
+    assert!(!root_help.contains("Output:"), "{root_help}");
+    assert!(!root_help.contains("Ontology:"), "{root_help}");
+    let last = root_help
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap();
+    assert!(last.contains("-V, --version"), "{root_help}");
+    assert!(last.contains("Print version"), "{root_help}");
 }
 
 #[test]

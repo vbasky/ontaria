@@ -1,6 +1,6 @@
 # Stability
 
-Ontaria 0.9.0 is a pre-1.0 release. The suggested 1.0 row in `ROADMAP.md` is a frozen public API. That freeze has not happened.
+Ontaria 0.9.1 is a pre-1.0 release. The suggested 1.0 row in `ROADMAP.md` is a frozen public API. That freeze has not happened.
 
 ## Versions
 
