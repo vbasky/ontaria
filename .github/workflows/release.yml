@@ -155,7 +155,8 @@ jobs:
 
   publish:
     name: Publish to crates.io
-    if: github.event_name == 'push'
+    # A manual rebuild publishes too. Versions already on crates.io are skipped.
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 15
     needs: [release]
     runs-on: ubuntu-latest
@@ -227,5 +228,6 @@ jobs:
               continue
             fi
             echo "==> cargo publish ${c}@${version}"
-            cargo publish -p "${c}"
+            # The som strip above edits Cargo.toml in the runner checkout.
+            cargo publish -p "${c}" --allow-dirty
           done

@@ -34,3 +34,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 tiny_http = "0.12"
 tokio = { version = "1", optional = true, features = ["rt-multi-thread", "macros", "io-std"] }
+
+# The crates.io package drops the som feature because that crate is not
+# published. The cfg attributes stay in the source.
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("som"))'] }
