@@ -13,5 +13,5 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 ontaria = { path = "../ontaria", default-features = false }
-pyo3 = "0.26"
+pyo3 = "0.29"
 serde_json = "1.0.154"

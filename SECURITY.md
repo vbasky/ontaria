@@ -27,12 +27,13 @@ Cached bytes live in the directory from `--cache-dir`, `ONTARIA_CACHE_DIR`, the 
 
 ## Known dependency notes
 
-`cargo deny` allows the licences in `deny.toml`, including `CDLA-Permissive-2.0` for the CA certificates that `webpki-roots` ships with `ureq`.
+`cargo deny` allows the licences in `deny.toml`, including `CDLA-Permissive-2.0` for the CA certificates that `webpki-roots` ships with `ureq`, `MIT-0` for `borrow-or-share` (through the vendored `som` crate), and `Apache-2.0 WITH LLVM-exception` for `target-lexicon` (a `pyo3` build dependency).
 
-Two advisories are ignored because the crates we depend on have not published a fix:
+These advisories are ignored because the crates we depend on have not published a fix:
 
 - `serde_yaml` 0.9, used for mapping files, depends on the archived `unsafe-libyaml` crate (`RUSTSEC-2024-0449`).
 - `oxrdfxml` 0.2.5 parses RDF/XML with `quick-xml` 0.37 (`RUSTSEC-2026-0194`, `RUSTSEC-2026-0195`). Downloaded documents are rejected above 32 MiB. A local file is only read when you pass its path.
+- `chrono` 0.4, pulled in by `rmcp` and `schemars`, is unmaintained (`RUSTSEC-2026-0543`).
 
 ## Reporting
 

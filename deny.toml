@@ -7,6 +7,9 @@ ignore = [
     # oxrdfxml 0.2.5 requires quick-xml 0.37. Fetch bodies are capped at 32 MiB.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # chrono is unmaintained. It arrives through rmcp and schemars, and the
+    # advisory has no fixed release.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
@@ -22,6 +25,10 @@ allow = [
     "CC0-1.0",
     # CA certificates bundled by webpki-roots, which ureq pulls in through rustls.
     "CDLA-Permissive-2.0",
+    # borrow-or-share, through jsonschema in the vendored som crate.
+    "MIT-0",
+    # target-lexicon, a build dependency of pyo3 in ontaria-python.
+    "Apache-2.0 WITH LLVM-exception",
 ]
 confidence-threshold = 0.8
 unused-allowed-license = "allow"
